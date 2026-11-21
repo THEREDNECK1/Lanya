@@ -4,9 +4,12 @@ mod ai_assistant;
 mod branch_manager;
 mod db_watcher;
 mod diff;
+mod exporter;
 mod interchange;
+mod otio_engine;
 #[allow(dead_code)]
 mod resolve_db;
+mod revert;
 mod reviews;
 mod ui;
 mod watcher;
@@ -639,14 +642,23 @@ impl ResolveSidecarApp {
     }
 
     pub(crate) fn rollback_micro_save(&mut self, full_oid: &str) {
-        if let Err(err) = watcher::rollback_to_commit(&self.repo_path, full_oid) {
-            self.status_message = format!("Rollback error: {err}");
-            return;
-        }
+        let restored = match revert::restore_commit_cut_otio(&self.repo_path, full_oid) {
+            Ok(p) => p,
+            Err(err) => {
+                self.status_message = format!("Rollback error: {err}");
+                return;
+            }
+        };
         self.refresh_all();
         self.scan_timeline_diff();
         let short = &full_oid[..7.min(full_oid.len())];
-        self.status_message = format!("Restored working tree to micro-save {short}");
+        let name = restored
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("cut.otio");
+        self.status_message = format!(
+            "Restored '{name}' from micro-save {short} & opened independent Resolve tab"
+        );
     }
 
     fn refresh_git_log(&mut self) {

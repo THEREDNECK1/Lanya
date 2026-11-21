@@ -90,6 +90,9 @@ pub(crate) fn start_sandbox(
     raw_slug: &str,
     project_file: Option<&Path>,
 ) -> Result<String, String> {
+    // Best-effort headless OTIO export via F12 before branching
+    let _ = crate::exporter::export_and_wait_otio(repo_path);
+
     let repo = Repository::open(repo_path).map_err(|e| format!("Git open error: {e}"))?;
 
     // 1. Ensure working tree is clean / auto-commit lingering micro-saves to current branch

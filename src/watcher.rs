@@ -1,8 +1,6 @@
-use crate::resolve_db;
+use crate::{exporter, otio_engine, resolve_db};
 use chrono::Utc;
-use git2::{
-    build::CheckoutBuilder, BranchType, IndexAddOption, Oid, Repository, Signature, Sort,
-};
+use git2::{BranchType, IndexAddOption, Repository, Signature, Sort};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
@@ -10,7 +8,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 pub(crate) const SCRATCH_BRANCH: &str = "scratch/live-stream";
-const DEBOUNCE_MS: u64 = 2000;
+const IDLE_COOLDOWN_SECS: u64 = 90;
 
 #[derive(Clone)]
 pub(crate) struct MicroCommitNode {
@@ -75,9 +73,10 @@ pub(crate) fn start_live_watcher(repo_path: PathBuf) -> Option<LiveWatcherHandle
     watcher.watch(&watch_root, RecursiveMode::Recursive).ok()?;
 
     thread::spawn(move || {
-        let debounce = Duration::from_millis(DEBOUNCE_MS);
+        let debounce = Duration::from_secs(IDLE_COOLDOWN_SECS);
         let mut pending_path: Option<PathBuf> = None;
         let mut last_event_at: Option<Instant> = None;
+        let mut previous_otio = otio_engine::load_snapshot_from_timelines(&repo_path.join("Timelines"));
 
         loop {
             match raw_rx.recv_timeout(Duration::from_millis(250)) {
@@ -93,7 +92,38 @@ pub(crate) fn start_live_watcher(repo_path: PathBuf) -> Option<LiveWatcherHandle
                             last_event_at = None;
 
                             let _ = sync_project_file_to_repo(&settled_path, &repo_path);
-                            if let Ok(Some(short_id)) = commit_micro_save_if_dirty(&repo_path) {
+                            let _ = exporter::export_and_wait_otio(&repo_path);
+
+                            let mut semantic_msg: Option<String> = None;
+                            if let Some(curr_otio) =
+                                otio_engine::load_snapshot_from_timelines(&repo_path.join("Timelines"))
+                            {
+                                if let Some(ref prev_otio) = previous_otio {
+                                    let delta = curr_otio.diff(prev_otio);
+                                    let msg = otio_engine::format_delta_commit_message(&delta);
+                                    let delta_json = serde_json::json!({
+                                        "timeline_name": curr_otio.name,
+                                        "modified_tracks": delta.modified_tracks,
+                                        "added_clips": delta.added_clips,
+                                        "removed_clips": delta.removed_clips,
+                                        "duration_delta_sec": delta.duration_delta_sec,
+                                        "summary": msg,
+                                    });
+                                    if let Ok(pretty) = serde_json::to_string_pretty(&delta_json) {
+                                        let _ = std::fs::write(
+                                            repo_path.join("Timelines").join("incoming_cut_delta.json"),
+                                            pretty,
+                                        );
+                                    }
+                                    semantic_msg = Some(msg);
+                                }
+                                previous_otio = Some(curr_otio);
+                            }
+
+                            if let Ok(Some(short_id)) = commit_micro_save_if_dirty_with_msg(
+                                &repo_path,
+                                semantic_msg.as_deref(),
+                            ) {
                                 let _ = ui_tx.send(WatcherEvent::MicroSaveCommitted {
                                     project_file: settled_path,
                                     short_id,
@@ -135,7 +165,15 @@ pub(crate) fn sync_project_file_to_repo(
         .map_err(|e| format!("Failed to mirror project file: {e}"))
 }
 
+#[cfg(test)]
 pub(crate) fn commit_micro_save_if_dirty(repo_path: &Path) -> Result<Option<String>, String> {
+    commit_micro_save_if_dirty_with_msg(repo_path, None)
+}
+
+pub(crate) fn commit_micro_save_if_dirty_with_msg(
+    repo_path: &Path,
+    custom_message: Option<&str>,
+) -> Result<Option<String>, String> {
     let repo = Repository::open(repo_path).map_err(|e| format!("Git open error: {e}"))?;
     let statuses = repo
         .statuses(None)
@@ -178,13 +216,23 @@ pub(crate) fn commit_micro_save_if_dirty(repo_path: &Path) -> Result<Option<Stri
         .map_err(|e| format!("Signature error: {e}"))?;
 
     let iso_ts = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-    let msg = format!("micro-save: {iso_ts}");
+    let msg = custom_message
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("micro-save: {iso_ts}"));
+
+    let target_ref = match repo.head().ok().and_then(|h| h.shorthand().map(str::to_string)) {
+        Some(active) if active.starts_with("experiment/") || active.starts_with("pass/") => {
+            format!("refs/heads/{active}")
+        }
+        _ => format!("refs/heads/{SCRATCH_BRANCH}"),
+    };
 
     let parents: Vec<&git2::Commit<'_>> = parent_commit.iter().collect();
-    let scratch_ref = format!("refs/heads/{SCRATCH_BRANCH}");
 
     let oid = repo
-        .commit(Some(&scratch_ref), &sig, &sig, &msg, &tree, &parents)
+        .commit(Some(&target_ref), &sig, &sig, &msg, &tree, &parents)
         .map_err(|e| format!("Micro-save commit error: {e}"))?;
 
     Ok(Some(format!("{:.7}", oid)))
@@ -225,7 +273,9 @@ pub(crate) fn list_micro_commits(repo_path: &Path) -> Vec<MicroCommitNode> {
     nodes
 }
 
+#[cfg(test)]
 pub(crate) fn rollback_to_commit(repo_path: &Path, full_oid: &str) -> Result<(), String> {
+    use git2::{build::CheckoutBuilder, Oid};
     let repo = Repository::open(repo_path).map_err(|e| format!("Git open error: {e}"))?;
     let oid = Oid::from_str(full_oid).map_err(|e| format!("Invalid OID: {e}"))?;
     let commit = repo
