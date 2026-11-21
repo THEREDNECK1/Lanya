@@ -1,7 +1,8 @@
 {
-  "clips": [],
-  "diff_items": [],
-  "fps": "24",
-  "project_name": "New Project 6",
-  "timeline_name": "Active Timeline"
+  "added_clips": [],
+  "duration_delta_sec": 0.0,
+  "modified_tracks": [],
+  "removed_clips": [],
+  "summary": "micro-save: 2026-11-21T14:08:20Z",
+  "timeline_name": "Master Timeline"
 }

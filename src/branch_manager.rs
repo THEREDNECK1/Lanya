@@ -1,9 +1,31 @@
-use crate::{ai_assistant, db_watcher, interchange, slugify_branch_title, ScopeChecklist};
-use chrono::Utc;
 use git2::{
     build::CheckoutBuilder, BranchType, IndexAddOption, Repository, ResetType, Signature,
 };
 use std::path::Path;
+
+pub fn slugify_branch_title(raw: &str) -> String {
+    let trimmed = raw
+        .trim()
+        .trim_start_matches("experiment/")
+        .trim_start_matches("pass/");
+    let mut slug = String::new();
+    let mut prev_dash = false;
+    for ch in trimmed.chars() {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch.to_ascii_lowercase());
+            prev_dash = false;
+        } else if !prev_dash && !slug.is_empty() {
+            slug.push('-');
+            prev_dash = true;
+        }
+    }
+    let cleaned = slug.trim_matches('-').to_string();
+    if cleaned.is_empty() {
+        "edit-session".to_string()
+    } else {
+        cleaned
+    }
+}
 
 pub(crate) fn current_branch_name(repo_path: &Path) -> String {
     let Ok(repo) = Repository::open(repo_path) else {
@@ -13,28 +35,6 @@ pub(crate) fn current_branch_name(repo_path: &Path) -> String {
         return "main".to_string();
     };
     head.shorthand().unwrap_or("main").to_string()
-}
-
-pub(crate) fn suggest_sandbox_slug(
-    ai_endpoint: Option<&str>,
-    ai_model: Option<&str>,
-    scope: &ScopeChecklist,
-    timeline_name: &str,
-) -> String {
-    let draft = ai_assistant::generate_advisory_pr_draft(
-        ai_endpoint,
-        ai_model,
-        scope,
-        timeline_name,
-        "2-word experimental sandbox branch slug",
-    );
-    let slug = slugify_branch_title(&draft.title);
-    let parts: Vec<&str> = slug.split('-').filter(|p| !p.is_empty()).take(2).collect();
-    if parts.is_empty() {
-        "cold-open".to_string()
-    } else {
-        parts.join("-")
-    }
 }
 
 fn commit_lingering_changes_if_dirty(repo: &Repository) -> Result<(), String> {
@@ -69,14 +69,13 @@ fn commit_lingering_changes_if_dirty(repo: &Repository) -> Result<(), String> {
         .signature()
         .or_else(|_| Signature::now("Zane", "zane@editor.local"))
         .map_err(|e| format!("Signature error: {e}"))?;
-    let ts = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     let parents: Vec<&git2::Commit<'_>> = parent_commit.iter().collect();
 
     repo.commit(
         Some("HEAD"),
         &sig,
         &sig,
-        &format!("micro-save: {ts}"),
+        "[Edit] Pre-sandbox working snapshot",
         &tree,
         &parents,
     )
@@ -85,29 +84,11 @@ fn commit_lingering_changes_if_dirty(repo: &Repository) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn start_sandbox(
-    repo_path: &Path,
-    raw_slug: &str,
-    project_file: Option<&Path>,
-) -> Result<String, String> {
-    // Best-effort headless OTIO export via F12 before branching
-    let _ = crate::exporter::export_and_wait_otio(repo_path);
-
+#[allow(dead_code)]
+pub(crate) fn start_sandbox(repo_path: &Path, raw_slug: &str) -> Result<String, String> {
     let repo = Repository::open(repo_path).map_err(|e| format!("Git open error: {e}"))?;
-
-    // 1. Ensure working tree is clean / auto-commit lingering micro-saves to current branch
     commit_lingering_changes_if_dirty(&repo)?;
 
-    // 2. Snapshot current timeline to .timeline_base.json
-    if let Some(pf) = project_file.filter(|p| p.is_file()) {
-        if let Ok(snapshot) = db_watcher::read_timeline_snapshot(pf) {
-            if let Ok(pretty) = serde_json::to_string_pretty(&snapshot) {
-                let _ = std::fs::write(repo_path.join(".timeline_base.json"), pretty);
-            }
-        }
-    }
-
-    // 3. Create & checkout `experiment/<slug>`
     let slug = slugify_branch_title(raw_slug);
     let branch_name = format!("experiment/{slug}");
     let head_commit = repo
@@ -142,7 +123,6 @@ pub(crate) fn discard_sandbox(repo_path: &Path) -> Result<Option<String>, String
         .peel_to_commit()
         .map_err(|e| format!("main commit error: {e}"))?;
 
-    // 1. Reset working tree and HEAD back to `main`
     repo.set_head("refs/heads/main")
         .map_err(|e| format!("Set HEAD main error: {e}"))?;
 
@@ -151,21 +131,11 @@ pub(crate) fn discard_sandbox(repo_path: &Path) -> Result<Option<String>, String
     repo.reset(main_commit.as_object(), ResetType::Hard, Some(&mut checkout_opts))
         .map_err(|e| format!("Hard reset to main error: {e}"))?;
 
-    // 2. Hands-free reload clean baseline timeline into running Resolve (if interchange exists)
-    let timelines_dir = repo_path.join("Timelines");
-    let staging_dir = repo_path.join("staging_media");
-    if let Some(interchange_file) = interchange::find_latest_interchange_file(&timelines_dir) {
-        let target =
-            interchange::unpack_otioz_if_needed(&interchange_file, &timelines_dir, &staging_dir)?;
-        let label = target
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("baseline")
-            .to_string();
-        interchange::import_timeline_into_running_resolve(&target)?;
-        return Ok(Some(label));
+    // Signal sidecar_bridge.py / sidecar_import.py if Timelines/cut.otio exists
+    let cut_otio = repo_path.join("Timelines").join("cut.otio");
+    if cut_otio.is_file() {
+        return Ok(Some("cut.otio".to_string()));
     }
-
     Ok(None)
 }
 
@@ -196,11 +166,10 @@ mod tests {
             .unwrap();
         repo.set_head("refs/heads/main").unwrap();
 
-        let branch = start_sandbox(&temp_root, "Cold Open", None).unwrap();
+        let branch = start_sandbox(&temp_root, "Cold Open").unwrap();
         assert_eq!(branch, "experiment/cold-open");
         assert_eq!(current_branch_name(&temp_root), "experiment/cold-open");
 
-        // Make experimental edit on sandbox
         std::fs::write(&file, "experimental_cut").unwrap();
 
         let _ = discard_sandbox(&temp_root).unwrap();

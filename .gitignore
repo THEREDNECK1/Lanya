@@ -1,1 +1,4 @@
 /target
+Timelines/Restore_*.otio
+Timelines/*.otio.tmp
+Timelines/*.signal
