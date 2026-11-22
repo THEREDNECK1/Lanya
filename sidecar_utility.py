@@ -255,15 +255,32 @@ def get_process_cmdline() -> str:
 def daemon_loop(initial_resolve_obj, initial_last_hash: str) -> None:
     last_hash = initial_last_hash
     resolve_obj = initial_resolve_obj
-    pm = resolve_obj.GetProjectManager()
+    pm = resolve_obj.GetProjectManager() if resolve_obj is not None else None
+    waiting_logged = False
 
     log("[Sidecar Auto-Sync] 1.2s polling daemon active.")
     try:
         while True:
             try:
+                if resolve_obj is None or pm is None:
+                    resolve_obj = get_resolve_instance()
+                    pm = resolve_obj.GetProjectManager() if resolve_obj is not None else None
+                    if pm is None:
+                        if not waiting_logged:
+                            log("[Sidecar Auto-Sync] Waiting for DaVinci Resolve to reconnect...")
+                            waiting_logged = True
+                        time.sleep(POLL_INTERVAL_SECS)
+                        continue
+                    if waiting_logged:
+                        log("[Sidecar Auto-Sync] Reconnected to DaVinci Resolve.")
+                        waiting_logged = False
+
                 last_hash = poll_once(resolve_obj, pm, last_hash, verbose=False)
             except Exception as exc:
-                log(f"[Sidecar Auto-Sync] Warning: {exc}\n{traceback.format_exc()}")
+                log(f"[Sidecar Auto-Sync] Connection lost ({exc}); resetting Resolve handle...")
+                resolve_obj = None
+                pm = None
+                waiting_logged = True
                 safe_unlink(TMP_PATH)
 
             time.sleep(POLL_INTERVAL_SECS)

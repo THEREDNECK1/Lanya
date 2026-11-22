@@ -1,0 +1,126 @@
+<?xml version='1.0' encoding='windows-1252'?>
+<Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
+  <Product
+    Id='*'
+    Name='Lanya'
+    UpgradeCode='D3A1B2C3-4E5F-6A7B-8C9D-0E1F2A3B4C5D'
+    Manufacturer='Redneck Wrench Customs'
+    Language='1033'
+    Codepage='1252'
+    Version='0.1.0'>
+
+    <Package
+      Id='*'
+      Keywords='Installer'
+      Description='Lanya - Collaborative DaVinci Resolve Suite'
+      Manufacturer='Redneck Wrench Customs'
+      InstallerVersion='450'
+      Languages='1033'
+      Compressed='yes'
+      SummaryCodepage='1252'
+      InstallScope='perMachine' />
+
+    <MajorUpgrade
+      Schedule='afterInstallInitialize'
+      DowngradeErrorMessage='A newer version of [ProductName] is already installed.' />
+
+    <Media Id='1' Cabinet='product.cab' EmbedCab='yes' />
+
+    <Icon Id='LanyaIcon.ico' SourceFile='assets\lanya.ico' />
+    <Property Id='ARPPRODUCTICON' Value='LanyaIcon.ico' />
+
+    <!-- Directory Structure (Installs cleanly into Program Files) -->
+    <Directory Id='TARGETDIR' Name='SourceDir'>
+      <Directory Id='ProgramFiles64Folder'>
+        <Directory Id='APPLICATIONROOTDIRECTORY' Name='Lanya'>
+          <Directory Id='PipelineDir' Name='pipeline'>
+            <Directory Id='AiIngestorDir' Name='ai-ingestor' />
+          </Directory>
+          <Directory Id='ScriptsDir' Name='scripts' />
+        </Directory>
+      </Directory>
+      <Directory Id='ProgramMenuFolder'>
+        <Directory Id='ApplicationProgramsFolder' Name='Lanya' />
+      </Directory>
+    </Directory>
+
+    <!-- Component Definitions -->
+    <DirectoryRef Id='APPLICATIONROOTDIRECTORY'>
+      <Component Id='MainExecutable' Guid='*'>
+        <File
+          Id='lanya.exe'
+          Name='lanya.exe'
+          Source='target\release\resolve-sidecar.exe'
+          KeyPath='yes'>
+          <Shortcut
+            Id='ApplicationStartMenuShortcut'
+            Directory='ApplicationProgramsFolder'
+            Name='Lanya'
+            Description='Lanya - Collaborative DaVinci Resolve Suite'
+            Icon='LanyaIcon.ico'
+            WorkingDirectory='APPLICATIONROOTDIRECTORY'
+            Advertise='yes' />
+        </File>
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id='PipelineDir'>
+      <Component Id='PipelineBat' Guid='*'>
+        <File
+          Id='StartPipelineBat'
+          Source='pipeline\start_pipeline.bat'
+          KeyPath='yes' />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id='AiIngestorDir'>
+      <Component Id='TranscodeWorkerPy' Guid='*'>
+        <File
+          Id='InteractiveTranscodeWorkerPy'
+          Source='pipeline\ai-ingestor\interactive_transcode_worker.py'
+          KeyPath='yes' />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id='ScriptsDir'>
+      <Component Id='SidecarUtilityPy' Guid='*'>
+        <File
+          Id='SidecarUtilityScript'
+          Source='scripts\sidecar_utility.py'
+          KeyPath='yes' />
+      </Component>
+      <Component Id='SidecarImportPy' Guid='*'>
+        <File
+          Id='SidecarImportScript'
+          Source='scripts\sidecar_import.py'
+          KeyPath='yes' />
+      </Component>
+    </DirectoryRef>
+
+    <!-- Start Menu Folder Cleanup -->
+    <DirectoryRef Id='ApplicationProgramsFolder'>
+      <Component Id='ApplicationShortcut' Guid='*'>
+        <RemoveFolder Id='ApplicationProgramsFolder' On='uninstall' />
+        <RegistryValue
+          Root='HKCU'
+          Key='Software\RedneckWrenchCustoms\Lanya'
+          Name='installed'
+          Type='integer'
+          Value='1'
+          KeyPath='yes' />
+      </Component>
+    </DirectoryRef>
+
+    <!-- Feature Map -->
+    <Feature Id='MainFeature' Title='Lanya' Level='1'>
+      <ComponentRef Id='MainExecutable' />
+      <ComponentRef Id='PipelineBat' />
+      <ComponentRef Id='TranscodeWorkerPy' />
+      <ComponentRef Id='SidecarUtilityPy' />
+      <ComponentRef Id='SidecarImportPy' />
+      <ComponentRef Id='ApplicationShortcut' />
+    </Feature>
+
+    <UIRef Id='WixUI_Minimal' />
+  </Product>
+</Wix>

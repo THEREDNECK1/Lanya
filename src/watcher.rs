@@ -22,13 +22,22 @@ pub(crate) struct MicroCommitNode {
     pub(crate) timestamp: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum AppEvent {
     RepoUpdated,
+    RemoteStatusChanged(git_engine::RemoteSyncState),
+    PushCompleted(Result<(), String>),
 }
 
 pub(crate) struct TimelineWatcher {
     _debouncer: Debouncer<RecommendedWatcher>,
+    tx: mpsc::Sender<AppEvent>,
+}
+
+impl TimelineWatcher {
+    pub(crate) fn sender(&self) -> mpsc::Sender<AppEvent> {
+        self.tx.clone()
+    }
 }
 
 fn hash_bytes(bytes: &[u8]) -> u64 {
@@ -46,6 +55,7 @@ pub(crate) fn start_timeline_watcher(
 
     let (tx, rx) = mpsc::channel::<AppEvent>();
     let watch_repo = repo_path.clone();
+    let debouncer_tx = tx.clone();
 
     let mut last_cut_hash: Option<u64> = std::fs::read(&target_cut_path)
         .ok()
@@ -83,7 +93,7 @@ pub(crate) fn start_timeline_watcher(
             last_cut_hash = Some(new_hash);
 
             if let Ok(Some(_commit_info)) = auto_commit_cut_change(&watch_repo) {
-                let _ = tx.send(AppEvent::RepoUpdated);
+                let _ = debouncer_tx.send(AppEvent::RepoUpdated);
             }
         },
     )
@@ -94,9 +104,43 @@ pub(crate) fn start_timeline_watcher(
         .watch(&timelines_dir, RecursiveMode::NonRecursive)
         .ok()?;
 
+    // Periodic remote collaboration poll (every 30s)
+    let remote_repo = repo_path;
+    let remote_tx = tx.clone();
+    let _ = std::thread::Builder::new()
+        .name("resolve-sidecar-remote-fetch".to_string())
+        .spawn(move || {
+            std::thread::sleep(Duration::from_secs(2));
+            loop {
+                let _ = remote_tx.send(AppEvent::RemoteStatusChanged(
+                    git_engine::RemoteSyncState::Checking,
+                ));
+                if let Ok(has_new_remote) = git_engine::fetch_origin_and_detect_updates(&remote_repo)
+                {
+                    if has_new_remote {
+                        let _ = remote_tx.send(AppEvent::RepoUpdated);
+                    }
+                }
+                let behind = git_engine::check_remote_behind_count(&remote_repo);
+                let state = if behind > 0 {
+                    git_engine::RemoteSyncState::Behind(behind)
+                } else {
+                    git_engine::RemoteSyncState::Synced
+                };
+                if remote_tx
+                    .send(AppEvent::RemoteStatusChanged(state))
+                    .is_err()
+                {
+                    break;
+                }
+                std::thread::sleep(Duration::from_secs(30));
+            }
+        });
+
     Some((
         TimelineWatcher {
             _debouncer: debouncer,
+            tx,
         },
         rx,
     ))

@@ -1,5 +1,5 @@
 use crate::graph_draw::{self, COLOR_EXPERIMENT};
-use crate::{CommitBranchKind, CommitNodeInfo, ResolveSidecarApp, StorageMountState};
+use crate::{AppView, CommitBranchKind, CommitNodeInfo, ResolveSidecarApp, StorageMountState};
 use eframe::egui::{
     self, Align, Color32, Frame, Label, Layout, Margin, RichText, Rounding, ScrollArea, Stroke,
     Vec2,
@@ -191,35 +191,131 @@ fn clean_leaf_commit_summary(raw: &str) -> String {
     }
 }
 
-const BG_BASE: Color32 = Color32::from_rgb(12, 14, 18);
-const BG_SURFACE: Color32 = Color32::from_rgb(20, 23, 30);
-const BG_ELEVATED: Color32 = Color32::from_rgb(27, 31, 41);
-const BORDER_SUBTLE: Color32 = Color32::from_rgb(38, 44, 58);
+const BG_BASE: Color32 = Color32::from_rgb(13, 13, 15);
+const BG_SURFACE: Color32 = Color32::from_rgb(22, 22, 26);
+const BG_ELEVATED: Color32 = Color32::from_rgb(31, 31, 37);
+const BORDER_SUBTLE: Color32 = Color32::from_rgb(48, 48, 58);
 
-const TEXT_PRIMARY: Color32 = Color32::from_rgb(241, 245, 249);
-const TEXT_SECONDARY: Color32 = Color32::from_rgb(148, 163, 184);
-const TEXT_MUTED: Color32 = Color32::from_rgb(100, 116, 139);
+const TEXT_PRIMARY: Color32 = Color32::from_rgb(244, 244, 246);
+const TEXT_SECONDARY: Color32 = Color32::from_rgb(161, 161, 175);
+const TEXT_MUTED: Color32 = Color32::from_rgb(113, 113, 128);
 
-const ACCENT_CYAN: Color32 = Color32::from_rgb(56, 189, 248);
-const ACCENT_CYAN_DARK: Color32 = Color32::from_rgb(14, 165, 233);
-const ACCENT_TEAL: Color32 = Color32::from_rgb(45, 212, 191);
-const ACCENT_TEAL_BTN: Color32 = Color32::from_rgb(13, 148, 136);
-const ACCENT_AMBER: Color32 = Color32::from_rgb(245, 158, 11);
-const ACCENT_RED: Color32 = Color32::from_rgb(239, 68, 68);
+const ACCENT_CYAN: Color32 = Color32::from_rgb(96, 165, 250);
+const ACCENT_CYAN_DARK: Color32 = Color32::from_rgb(37, 99, 235);
+const ACCENT_TEAL: Color32 = Color32::from_rgb(52, 211, 153);
+const ACCENT_TEAL_BTN: Color32 = Color32::from_rgb(16, 145, 108);
+const ACCENT_AMBER: Color32 = Color32::from_rgb(245, 179, 66);
+const ACCENT_RED: Color32 = Color32::from_rgb(248, 113, 113);
+
+fn card_shadow() -> egui::epaint::Shadow {
+    egui::epaint::Shadow {
+        offset: Vec2::new(0.0, 4.0),
+        blur: 14.0,
+        spread: 0.0,
+        color: Color32::from_rgba_unmultiplied(0, 0, 0, 110),
+    }
+}
+
+fn google_g_texture(ctx: &egui::Context) -> Option<egui::TextureHandle> {
+    let id = egui::Id::new("google_g_icon_tex");
+    if let Some(tex) = ctx.data(|d| d.get_temp::<egui::TextureHandle>(id)) {
+        return Some(tex);
+    }
+    let icon_data = eframe::icon_data::from_png_bytes(include_bytes!("../assets/google_g.png")).ok()?;
+    let color_img = egui::ColorImage::from_rgba_unmultiplied(
+        [icon_data.width as usize, icon_data.height as usize],
+        &icon_data.rgba,
+    );
+    let tex = ctx.load_texture("google_g_icon", color_img, egui::TextureOptions::LINEAR);
+    ctx.data_mut(|d| d.insert_temp(id, tex.clone()));
+    Some(tex)
+}
+
+fn render_google_sign_in_button(ui: &mut egui::Ui, enabled: bool) -> egui::Response {
+    let btn_size = Vec2::new(192.0_f32, 36.0_f32);
+    let sense = if enabled {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
+    let (rect, resp) = ui.allocate_exact_size(btn_size, sense);
+    let bg = if !enabled {
+        Color32::from_rgb(24, 24, 26)
+    } else if resp.hovered() {
+        Color32::from_rgb(31, 31, 31)
+    } else {
+        Color32::from_rgb(19, 19, 20)
+    };
+    let border_col = Color32::from_rgb(116, 119, 117);
+    let text_col = if enabled {
+        Color32::from_rgb(227, 227, 227)
+    } else {
+        TEXT_MUTED
+    };
+
+    let painter = ui.painter();
+    painter.rect_filled(rect, Rounding::same(18.0_f32), bg);
+    painter.rect_stroke(rect, Rounding::same(18.0_f32), Stroke::new(1.0_f32, border_col));
+
+    let icon_rect = egui::Rect::from_center_size(
+        egui::pos2(rect.left() + 21.0_f32, rect.center().y),
+        Vec2::splat(18.0_f32),
+    );
+    if let Some(tex) = google_g_texture(ui.ctx()) {
+        painter.image(
+            tex.id(),
+            icon_rect,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            Color32::WHITE,
+        );
+    }
+
+    painter.text(
+        egui::pos2(icon_rect.right() + 8.0_f32, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        "Sign in with Google",
+        egui::FontId::proportional(12.0_f32),
+        text_col,
+    );
+
+    resp
+}
+
+fn surface_card() -> Frame {
+    Frame::none()
+        .fill(BG_SURFACE)
+        .rounding(Rounding::same(10.0_f32))
+        .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
+        .shadow(card_shadow())
+        .inner_margin(Margin::same(16.0_f32))
+}
 
 pub(crate) fn render_app(app: &mut ResolveSidecarApp, ctx: &egui::Context) {
     let mut style = (*ctx.style()).clone();
     style.visuals.dark_mode = true;
     style.visuals.panel_fill = BG_BASE;
     style.visuals.window_fill = BG_SURFACE;
-    style.visuals.extreme_bg_color = BG_BASE;
+    style.visuals.extreme_bg_color = Color32::from_rgb(16, 16, 20);
+    style.visuals.faint_bg_color = Color32::from_rgb(26, 26, 31);
     style.visuals.widgets.noninteractive.bg_fill = BG_SURFACE;
     style.visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, BORDER_SUBTLE);
+    style.visuals.widgets.noninteractive.rounding = Rounding::same(8.0_f32);
     style.visuals.widgets.inactive.bg_fill = BG_ELEVATED;
     style.visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, BORDER_SUBTLE);
-    style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(35, 41, 54);
-    style.visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, ACCENT_CYAN);
-    style.spacing.item_spacing = Vec2::new(8.0_f32, 6.0_f32);
+    style.visuals.widgets.inactive.rounding = Rounding::same(6.0_f32);
+    style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(42, 42, 50);
+    style.visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(84, 84, 102));
+    style.visuals.widgets.hovered.rounding = Rounding::same(6.0_f32);
+    style.visuals.widgets.active.bg_fill = Color32::from_rgb(50, 50, 60);
+    style.visuals.widgets.active.bg_stroke = Stroke::new(1.0_f32, ACCENT_CYAN);
+    style.visuals.widgets.active.rounding = Rounding::same(6.0_f32);
+    style.visuals.selection.bg_fill = Color32::from_rgba_unmultiplied(59, 130, 246, 55);
+    style.visuals.selection.stroke = Stroke::new(1.0_f32, ACCENT_CYAN);
+    style.visuals.window_shadow = card_shadow();
+    style.visuals.popup_shadow = card_shadow();
+    style.visuals.window_rounding = Rounding::same(10.0_f32);
+    style.spacing.button_padding = Vec2::new(11.0_f32, 5.5_f32);
+    style.spacing.item_spacing = Vec2::new(8.0_f32, 7.0_f32);
     ctx.set_style(style);
 
     let repo_label = app
@@ -243,9 +339,9 @@ pub(crate) fn render_app(app: &mut ResolveSidecarApp, ctx: &egui::Context) {
             ui.set_max_width(avail_w);
             ui.horizontal_centered(|ui| {
                 ui.label(
-                    RichText::new("RESOLVE SIDECAR")
+                    RichText::new("LANYA")
                         .strong()
-                        .size(12.5_f32)
+                        .size(13.0_f32)
                         .color(TEXT_PRIMARY),
                 );
                 ui.add_space(8.0_f32);
@@ -257,7 +353,7 @@ pub(crate) fn render_app(app: &mut ResolveSidecarApp, ctx: &egui::Context) {
                 } else {
                     ACCENT_TEAL
                 };
-                Frame::none()
+                    Frame::none()
                     .fill(BG_ELEVATED)
                     .rounding(Rounding::same(4.0_f32))
                     .stroke(Stroke::new(1.0_f32, branch_color.linear_multiply(0.55_f32)))
@@ -273,6 +369,34 @@ pub(crate) fn render_app(app: &mut ResolveSidecarApp, ctx: &egui::Context) {
                         );
                     });
 
+                ui.add_space(6.0_f32);
+                if app.z_drive_connected {
+                    ui.label(
+                        RichText::new("\u{25cf} Z: Connected")
+                            .monospace()
+                            .size(10.0_f32)
+                            .color(Color32::from_rgb(74, 222, 128)),
+                    );
+                } else {
+                    ui.label(
+                        RichText::new("\u{25cf} Z: Disconnected")
+                            .monospace()
+                            .size(10.0_f32)
+                            .color(ACCENT_AMBER),
+                    );
+                    let mount_btn = egui::Button::new(
+                        RichText::new("Mount Z:")
+                            .strong()
+                            .size(9.5_f32)
+                            .color(Color32::WHITE),
+                    )
+                    .fill(ACCENT_CYAN_DARK)
+                    .rounding(Rounding::same(3.0_f32));
+                    if ui.add(mount_btn).clicked() {
+                        app.mount_z_drive_now();
+                    }
+                }
+
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let sync_btn = egui::Button::new(
                         RichText::new("Sync")
@@ -284,6 +408,44 @@ pub(crate) fn render_app(app: &mut ResolveSidecarApp, ctx: &egui::Context) {
                     .rounding(Rounding::same(4.0_f32));
                     if ui.add(sync_btn).clicked() {
                         app.sync_repo_now();
+                    }
+
+                    let open_tickets = app
+                        .tickets
+                        .iter()
+                        .filter(|t| t.status == crate::tickets::TicketStatus::Open)
+                        .count();
+                    let ticket_label = if open_tickets > 0 {
+                        format!("\u{1f4ac} Tickets ({open_tickets})")
+                    } else {
+                        "\u{1f4ac} Tickets".to_string()
+                    };
+                    let tickets_btn = egui::Button::new(
+                        RichText::new(ticket_label)
+                            .strong()
+                            .size(11.0_f32)
+                            .color(if app.show_tickets_drawer {
+                                Color32::WHITE
+                            } else {
+                                TEXT_PRIMARY
+                            }),
+                    )
+                    .fill(if app.show_tickets_drawer {
+                        ACCENT_CYAN_DARK
+                    } else {
+                        BG_ELEVATED
+                    })
+                    .stroke(Stroke::new(
+                        1.0_f32,
+                        if open_tickets > 0 {
+                            ACCENT_AMBER.linear_multiply(0.75_f32)
+                        } else {
+                            BORDER_SUBTLE
+                        },
+                    ))
+                    .rounding(Rounding::same(4.0_f32));
+                    if ui.add(tickets_btn).clicked() {
+                        app.toggle_tickets_drawer();
                     }
 
                     let fork_btn = egui::Button::new(
@@ -298,6 +460,115 @@ pub(crate) fn render_app(app: &mut ResolveSidecarApp, ctx: &egui::Context) {
                         app.show_fork_sandbox_modal = true;
                     }
                 });
+            });
+        });
+
+fn draw_nav_icon(painter: &egui::Painter, center: egui::Pos2, view: AppView, color: Color32) {
+    let stroke = Stroke::new(1.5_f32, color);
+    match view {
+        AppView::HomeProjects => {
+            // Home glyph: pitched roof + house body
+            let roof = vec![
+                egui::pos2(center.x - 6.0, center.y - 0.5),
+                egui::pos2(center.x, center.y - 5.5),
+                egui::pos2(center.x + 6.0, center.y - 0.5),
+            ];
+            painter.add(egui::Shape::line(roof, stroke));
+            let body = egui::Rect::from_min_max(
+                egui::pos2(center.x - 4.0, center.y - 1.0),
+                egui::pos2(center.x + 4.0, center.y + 5.0),
+            );
+            painter.rect_stroke(body, Rounding::same(1.0_f32), stroke);
+        }
+        AppView::MediaPipeline => {
+            // Storage/Pipeline nodes glyph: two stacked server/node bars connected
+            let top_box = egui::Rect::from_min_max(
+                egui::pos2(center.x - 5.5, center.y - 5.0),
+                egui::pos2(center.x + 5.5, center.y - 1.0),
+            );
+            let bot_box = egui::Rect::from_min_max(
+                egui::pos2(center.x - 5.5, center.y + 1.0),
+                egui::pos2(center.x + 5.5, center.y + 5.0),
+            );
+            painter.rect_stroke(top_box, Rounding::same(1.0_f32), stroke);
+            painter.rect_stroke(bot_box, Rounding::same(1.0_f32), stroke);
+            painter.circle_filled(egui::pos2(center.x - 3.0, center.y - 3.0), 1.2_f32, color);
+            painter.circle_filled(egui::pos2(center.x - 3.0, center.y + 3.0), 1.2_f32, color);
+        }
+        AppView::Timeline => {
+            // Branch/Fork glyph: vertical stem + curved branch + 3 nodes
+            let p_top = egui::pos2(center.x - 3.5, center.y - 4.5);
+            let p_bot = egui::pos2(center.x - 3.5, center.y + 4.5);
+            let p_fork = egui::pos2(center.x - 3.5, center.y + 1.0);
+            let p_right = egui::pos2(center.x + 4.0, center.y - 3.5);
+            painter.line_segment([p_top, p_bot], stroke);
+            painter.line_segment([p_fork, p_right], stroke);
+            painter.circle_filled(p_top, 1.8_f32, color);
+            painter.circle_filled(p_bot, 1.8_f32, color);
+            painter.circle_filled(p_right, 1.8_f32, color);
+        }
+    }
+}
+
+    // Suite Navigation Strip
+    egui::TopBottomPanel::top("cinema_navstrip")
+        .exact_height(40.0_f32)
+        .frame(
+            Frame::none()
+                .fill(BG_BASE)
+                .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
+                .inner_margin(Margin::symmetric(14.0_f32, 4.0_f32)),
+        )
+        .show(ctx, |ui| {
+            ui.horizontal_centered(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0_f32;
+                for view in AppView::ALL {
+                    let active = app.current_view == view;
+                    let text_color = if active { TEXT_PRIMARY } else { TEXT_SECONDARY };
+                    let icon_color = if active { ACCENT_CYAN } else { TEXT_SECONDARY };
+                    let label = view.label();
+                    let est_w = 28.0_f32 + (label.len() as f32 * 6.8_f32) + 16.0_f32;
+                    let (rect, resp) = ui.allocate_exact_size(
+                        Vec2::new(est_w, 30.0_f32),
+                        egui::Sense::click(),
+                    );
+                    let bg = if active {
+                        BG_ELEVATED
+                    } else if resp.hovered() {
+                        Color32::from_rgb(26, 26, 32)
+                    } else {
+                        Color32::TRANSPARENT
+                    };
+                    let painter = ui.painter();
+                    painter.rect_filled(rect, Rounding::same(6.0_f32), bg);
+                    if active {
+                        painter.rect_stroke(
+                            rect,
+                            Rounding::same(6.0_f32),
+                            Stroke::new(1.0_f32, BORDER_SUBTLE),
+                        );
+                        // Cyan underline indicator
+                        painter.line_segment(
+                            [
+                                egui::pos2(rect.left() + 8.0, rect.bottom() - 1.5),
+                                egui::pos2(rect.right() - 8.0, rect.bottom() - 1.5),
+                            ],
+                            Stroke::new(2.0_f32, ACCENT_CYAN),
+                        );
+                    }
+                    let icon_center = egui::pos2(rect.left() + 16.0, rect.center().y);
+                    draw_nav_icon(painter, icon_center, view, icon_color);
+                    painter.text(
+                        egui::pos2(rect.left() + 28.0, rect.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        label,
+                        egui::FontId::proportional(11.5_f32),
+                        text_color,
+                    );
+                    if resp.clicked() {
+                        app.current_view = view;
+                    }
+                }
             });
         });
 
@@ -410,6 +681,60 @@ pub(crate) fn render_app(app: &mut ResolveSidecarApp, ctx: &egui::Context) {
         }
     }
 
+    if app.show_new_project_modal {
+        let mut open = true;
+        egui::Window::new("New Project Scaffolder")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+            .fixed_size(Vec2::new(400.0_f32, 185.0_f32))
+            .show(ctx, |ui| {
+                ui.label(
+                    RichText::new("Project Name")
+                        .strong()
+                        .size(11.0_f32)
+                        .color(TEXT_PRIMARY),
+                );
+                ui.add(
+                    egui::TextEdit::singleline(&mut app.new_project_name)
+                        .hint_text("e.g. Client_Documentary_Cut")
+                        .desired_width(370.0_f32),
+                );
+                ui.add_space(8.0_f32);
+                ui.label(
+                    RichText::new("Base Directory")
+                        .strong()
+                        .size(11.0_f32)
+                        .color(TEXT_PRIMARY),
+                );
+                ui.add(
+                    egui::TextEdit::singleline(&mut app.new_project_base_dir)
+                        .desired_width(370.0_f32),
+                );
+                ui.add_space(12.0_f32);
+                ui.horizontal(|ui| {
+                    let create_btn = egui::Button::new(
+                        RichText::new("Create & Open Project")
+                            .strong()
+                            .size(11.5_f32)
+                            .color(Color32::WHITE),
+                    )
+                    .fill(ACCENT_TEAL_BTN)
+                    .rounding(Rounding::same(5.0_f32));
+                    if ui.add(create_btn).clicked() {
+                        app.create_and_open_project();
+                    }
+                    if ui.button("Cancel").clicked() {
+                        app.show_new_project_modal = false;
+                    }
+                });
+            });
+        if !open {
+            app.show_new_project_modal = false;
+        }
+    }
+
     egui::CentralPanel::default()
         .frame(
             Frame::none()
@@ -419,8 +744,731 @@ pub(crate) fn render_app(app: &mut ResolveSidecarApp, ctx: &egui::Context) {
         .show(ctx, |ui| {
             let avail_w = ui.available_width();
             ui.set_max_width(avail_w);
-            render_workspace_view(app, ui);
+            match app.current_view {
+                AppView::HomeProjects => render_home_projects_view(app, ui),
+                AppView::MediaPipeline => render_media_pipeline_view(app, ui),
+                AppView::Timeline => {
+                    if app.needs_repo_setup {
+                        render_first_run_setup_card(app, ui);
+                    } else {
+                        render_workspace_view(app, ui);
+                    }
+                }
+            }
         });
+}
+
+fn render_home_projects_view(app: &mut ResolveSidecarApp, ui: &mut egui::Ui) {
+    ScrollArea::vertical()
+        .id_source("home_collab_scroll")
+        .show(ui, |ui| {
+            if app.needs_repo_setup {
+                render_first_run_setup_card(app, ui);
+                ui.add_space(16.0_f32);
+            }
+
+            ui.columns(2, |cols| {
+                // Left Column: Active Project Card + Z:\Projects Grid + [+ New Project]
+                cols[0].vertical(|ui| {
+                    let active_name = app
+                        .repo_path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("Resolve_Cloud_Storage")
+                        .to_string();
+                    Frame::none()
+                        .fill(BG_SURFACE)
+                        .rounding(Rounding::same(10.0_f32))
+                        .stroke(Stroke::new(1.0_f32, ACCENT_CYAN.linear_multiply(0.55_f32)))
+                        .shadow(card_shadow())
+                        .inner_margin(Margin::same(16.0_f32))
+                        .show(ui, |ui| {
+                            ui.label(
+                                RichText::new("ACTIVE PROJECT")
+                                    .strong()
+                                    .size(10.5_f32)
+                                    .color(ACCENT_CYAN),
+                            );
+                            ui.add_space(4.0_f32);
+                            ui.horizontal(|ui| {
+                                ui.vertical(|ui| {
+                                    ui.label(
+                                        RichText::new(&active_name)
+                                            .strong()
+                                            .size(14.0_f32)
+                                            .color(TEXT_PRIMARY),
+                                    );
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "{} \u{2022} branch: {}",
+                                            app.repo_path.display(),
+                                            app.current_branch
+                                        ))
+                                        .monospace()
+                                        .size(10.0_f32)
+                                        .color(TEXT_MUTED),
+                                    );
+                                });
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    let tl_btn = egui::Button::new(
+                                        RichText::new("Open Timeline")
+                                            .strong()
+                                            .size(11.0_f32)
+                                            .color(Color32::WHITE),
+                                    )
+                                    .fill(ACCENT_TEAL_BTN)
+                                    .rounding(Rounding::same(4.0_f32));
+                                    if ui.add(tl_btn).clicked() {
+                                        app.current_view = AppView::Timeline;
+                                    }
+                                });
+                            });
+                        });
+
+                    ui.add_space(10.0_f32);
+
+                    surface_card().show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new("PROJECT GRID (Z:\\PROJECTS & RECENT)")
+                                    .strong()
+                                    .size(11.0_f32)
+                                    .color(TEXT_SECONDARY),
+                            );
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                let new_btn = egui::Button::new(
+                                    RichText::new("+ New Project")
+                                        .strong()
+                                        .size(11.0_f32)
+                                        .color(Color32::WHITE),
+                                )
+                                .fill(ACCENT_CYAN_DARK)
+                                .rounding(Rounding::same(4.0_f32));
+                                if ui.add(new_btn).clicked() {
+                                    if std::path::Path::new(r"Z:\Projects").is_dir() {
+                                        app.new_project_base_dir = r"Z:\Projects".to_string();
+                                    }
+                                    app.show_new_project_modal = true;
+                                }
+                            });
+                        });
+                        ui.add_space(8.0_f32);
+
+                        let list = app.scan_z_projects();
+                        if list.is_empty() {
+                            ui.label(
+                                RichText::new("No projects found yet. Click '+ New Project' to create one.")
+                                    .size(11.0_f32)
+                                    .color(TEXT_MUTED),
+                            );
+                        } else {
+                            for proj in list {
+                                let is_active =
+                                    proj.path == app.repo_path && !app.needs_repo_setup;
+                                Frame::none()
+                                    .fill(BG_ELEVATED)
+                                    .rounding(Rounding::same(6.0_f32))
+                                    .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
+                                    .inner_margin(Margin::same(10.0_f32))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.vertical(|ui| {
+                                                ui.label(
+                                                    RichText::new(&proj.name)
+                                                        .strong()
+                                                        .size(12.0_f32)
+                                                        .color(TEXT_PRIMARY),
+                                                );
+                                                ui.label(
+                                                    RichText::new(format!(
+                                                        "{} \u{2022} {}",
+                                                        proj.path.display(),
+                                                        proj.last_opened
+                                                    ))
+                                                    .monospace()
+                                                    .size(9.5_f32)
+                                                    .color(TEXT_MUTED),
+                                                );
+                                            });
+                                            ui.with_layout(
+                                                Layout::right_to_left(Align::Center),
+                                                |ui| {
+                                                    let open_btn = egui::Button::new(
+                                                        RichText::new(if is_active {
+                                                            "Active"
+                                                        } else {
+                                                            "Open"
+                                                        })
+                                                        .strong()
+                                                        .size(10.5_f32)
+                                                        .color(Color32::WHITE),
+                                                    )
+                                                    .fill(if is_active {
+                                                        ACCENT_TEAL_BTN
+                                                    } else {
+                                                        ACCENT_CYAN_DARK
+                                                    })
+                                                    .rounding(Rounding::same(4.0_f32));
+                                                    if ui.add(open_btn).clicked() {
+                                                        app.switch_project(proj.path.clone());
+                                                    }
+                                                },
+                                            );
+                                        });
+                                    });
+                                ui.add_space(6.0_f32);
+                            }
+                        }
+                    });
+                });
+
+                // Right Column: GitHub Collaboration & Identity
+                surface_card()
+                    .show(&mut cols[1], |ui| {
+                        ui.label(
+                            RichText::new("GITHUB COLLABORATION & IDENTITY")
+                                .strong()
+                                .size(11.5_f32)
+                                .color(TEXT_PRIMARY),
+                        );
+                        ui.add_space(10.0_f32);
+
+                        ui.label(RichText::new("Editor Name").strong().size(11.0_f32).color(TEXT_SECONDARY));
+                        ui.add(
+                            egui::TextEdit::singleline(&mut app.github_auth.editor_name)
+                                .desired_width(ui.available_width()),
+                        );
+                        ui.add_space(8.0_f32);
+
+                        ui.label(RichText::new("Editor Email").strong().size(11.0_f32).color(TEXT_SECONDARY));
+                        ui.add(
+                            egui::TextEdit::singleline(&mut app.github_auth.editor_email)
+                                .desired_width(ui.available_width()),
+                        );
+                        ui.add_space(8.0_f32);
+
+                        ui.label(RichText::new("Remote Origin URL").strong().size(11.0_f32).color(TEXT_SECONDARY));
+                        ui.add(
+                            egui::TextEdit::singleline(&mut app.github_auth.remote_url)
+                                .desired_width(ui.available_width()),
+                        );
+                        ui.add_space(8.0_f32);
+
+                        ui.label(
+                            RichText::new("GitHub Personal Access Token (PAT, optional)")
+                                .strong()
+                                .size(11.0_f32)
+                                .color(TEXT_SECONDARY),
+                        );
+                        ui.add(
+                            egui::TextEdit::singleline(&mut app.github_auth.pat_token)
+                                .password(true)
+                                .desired_width(ui.available_width()),
+                        );
+                        ui.add_space(8.0_f32);
+
+                        let adv_label = if app.github_auth.show_advanced {
+                            "v Advanced Settings (OAuth App)"
+                        } else {
+                            "> Advanced Settings (OAuth App)"
+                        };
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    RichText::new(adv_label)
+                                        .size(10.0_f32)
+                                        .color(TEXT_MUTED),
+                                )
+                                .frame(false),
+                            )
+                            .clicked()
+                        {
+                            app.github_auth.show_advanced = !app.github_auth.show_advanced;
+                        }
+
+                        if app.github_auth.show_advanced {
+                            ui.add_space(4.0_f32);
+                            ui.horizontal(|ui| {
+                                ui.vertical(|ui| {
+                                    ui.label(
+                                        RichText::new("GitHub OAuth Client ID")
+                                            .strong()
+                                            .size(10.5_f32)
+                                            .color(TEXT_SECONDARY),
+                                    );
+                                    ui.add(
+                                        egui::TextEdit::singleline(&mut app.github_auth.oauth_client_id)
+                                            .hint_text("Ov23li...")
+                                            .desired_width(210.0_f32),
+                                    );
+                                });
+                                ui.vertical(|ui| {
+                                    ui.label(
+                                        RichText::new("OAuth Client Secret")
+                                            .strong()
+                                            .size(10.5_f32)
+                                            .color(TEXT_SECONDARY),
+                                    );
+                                    ui.add(
+                                        egui::TextEdit::singleline(&mut app.github_auth.oauth_client_secret)
+                                            .password(true)
+                                            .desired_width(210.0_f32),
+                                    );
+                                });
+                            });
+                            ui.label(
+                                RichText::new("OAuth Redirect URI: http://127.0.0.1:8088/callback")
+                                    .monospace()
+                                    .size(9.5_f32)
+                                    .color(TEXT_MUTED),
+                            );
+                        }
+                        ui.add_space(12.0_f32);
+
+                        ui.horizontal_wrapped(|ui| {
+                            if render_google_sign_in_button(ui, !app.github_oauth_in_progress)
+                                .clicked()
+                            {
+                                app.start_github_oauth();
+                            }
+
+                            let save_btn = egui::Button::new(
+                                RichText::new("Save Settings")
+                                    .strong()
+                                    .size(11.0_f32)
+                                    .color(Color32::WHITE),
+                            )
+                            .fill(ACCENT_TEAL_BTN)
+                            .rounding(Rounding::same(4.0_f32));
+                            if ui.add(save_btn).clicked() {
+                                app.save_github_collab_settings();
+                            }
+
+                            let verify_btn = egui::Button::new(
+                                RichText::new("Verify Auth")
+                                    .strong()
+                                    .size(11.0_f32)
+                                    .color(Color32::WHITE),
+                            )
+                            .fill(ACCENT_CYAN_DARK)
+                            .rounding(Rounding::same(4.0_f32));
+                            if ui.add(verify_btn).clicked() {
+                                app.verify_github_auth();
+                            }
+                        });
+
+                        ui.add_space(4.0_f32);
+                        ui.label(
+                            RichText::new("Opens GitHub in your browser (supports GitHub or Continue with Google).")
+                                .size(10.0_f32)
+                                .color(TEXT_MUTED),
+                        );
+
+                        if app.github_oauth_in_progress {
+                            ui.add_space(6.0_f32);
+                            ui.horizontal(|ui| {
+                                ui.spinner();
+                                ui.label(
+                                    RichText::new(
+                                        "Listening on http://127.0.0.1:8088/callback...",
+                                    )
+                                    .size(10.5_f32)
+                                    .color(ACCENT_AMBER),
+                                );
+                            });
+                        } else if !app.github_auth.auth_status_note.is_empty() {
+                            ui.add_space(8.0_f32);
+                            let note_color = if app.github_auth.auth_verified {
+                                Color32::from_rgb(74, 222, 128)
+                            } else {
+                                ACCENT_AMBER
+                            };
+                            ui.label(
+                                RichText::new(&app.github_auth.auth_status_note)
+                                    .monospace()
+                                    .size(10.5_f32)
+                                    .color(note_color),
+                            );
+                        }
+                    });
+            });
+        });
+}
+
+fn render_media_pipeline_view(app: &mut ResolveSidecarApp, ui: &mut egui::Ui) {
+    ScrollArea::vertical()
+        .id_source("media_pipeline_scroll")
+        .show(ui, |ui| {
+            // Card A: Cloud Storage & Mount
+            surface_card()
+                .show(ui, |ui| {
+                    ui.label(
+                        RichText::new("CARD A: CLOUD STORAGE & MOUNT (RCLONE WEBDAV)")
+                            .strong()
+                            .size(11.5_f32)
+                            .color(TEXT_SECONDARY),
+                    );
+                    ui.add_space(8.0_f32);
+
+                    // Section 1: Google Drive Auth & Remote Name configuration
+                    ui.label(
+                        RichText::new("ACCOUNT AUTHORIZATION")
+                            .strong()
+                            .size(10.0_f32)
+                            .color(TEXT_MUTED),
+                    );
+                    ui.add_space(4.0_f32);
+                    ui.horizontal_wrapped(|ui| {
+                        if app.rclone_remote_authenticated {
+                            ui.label(
+                                RichText::new(format!(
+                                    "\u{25cf} Authenticated ({})",
+                                    app.storage_remote_name.trim()
+                                ))
+                                .monospace()
+                                .strong()
+                                .size(11.5_f32)
+                                .color(Color32::from_rgb(74, 222, 128)),
+                            );
+                        } else {
+                            ui.label(
+                                RichText::new("\u{25cb} Not Authenticated")
+                                    .monospace()
+                                    .strong()
+                                    .size(11.5_f32)
+                                    .color(ACCENT_AMBER),
+                            );
+                        }
+                        ui.add_space(10.0_f32);
+                        if render_google_sign_in_button(ui, !app.rclone_oauth_in_progress)
+                            .clicked()
+                        {
+                            app.start_google_drive_oauth();
+                        }
+
+                        if app.rclone_oauth_in_progress {
+                            ui.add_space(8.0_f32);
+                            ui.spinner();
+                            ui.label(
+                                RichText::new("Waiting for browser authorization...")
+                                    .size(10.5_f32)
+                                    .color(ACCENT_AMBER),
+                            );
+                        }
+                    });
+                    ui.add_space(6.0_f32);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new("Remote Name:").size(11.0_f32).color(TEXT_SECONDARY));
+                        let remote_resp = ui.add(
+                            egui::TextEdit::singleline(&mut app.storage_remote_name)
+                                .desired_width(130.0_f32),
+                        );
+                        if remote_resp.changed() {
+                            app.check_rclone_remote_auth();
+                        }
+                        ui.add_space(10.0_f32);
+                        ui.label(
+                            RichText::new("Cloud Subfolder Path:")
+                                .size(11.0_f32)
+                                .color(TEXT_SECONDARY),
+                        );
+                        ui.add(
+                            egui::TextEdit::singleline(&mut app.storage_remote_subfolder)
+                                .desired_width(200.0_f32),
+                        );
+                    });
+
+                    ui.add_space(10.0_f32);
+                    ui.separator();
+                    ui.add_space(8.0_f32);
+
+                    // Section 2: Virtual Mount controls
+                    ui.label(
+                        RichText::new("VIRTUAL MOUNT CONTROLS")
+                            .strong()
+                            .size(10.0_f32)
+                            .color(TEXT_MUTED),
+                    );
+                    ui.add_space(4.0_f32);
+                    ui.horizontal_wrapped(|ui| {
+                        let (label, color) = if app.z_drive_connected {
+                            ("\u{25cf} Z: Connected", Color32::from_rgb(74, 222, 128))
+                        } else {
+                            ("\u{25cf} Z: Disconnected", ACCENT_AMBER)
+                        };
+                        ui.label(RichText::new(label).monospace().strong().size(12.0_f32).color(color));
+                        ui.add_space(12.0_f32);
+                        ui.label(RichText::new("Drive:").size(11.0_f32).color(TEXT_SECONDARY));
+                        egui::ComboBox::from_id_source("drive_letter_combo")
+                            .selected_text(&app.storage_drive_letter)
+                            .width(64.0_f32)
+                            .show_ui(ui, |ui| {
+                                for d in ["Z:", "Y:", "X:"] {
+                                    ui.selectable_value(
+                                        &mut app.storage_drive_letter,
+                                        d.to_string(),
+                                        d,
+                                    );
+                                }
+                            });
+
+                        let can_remount = app.rclone_remote_authenticated || app.z_drive_connected;
+                        let remount_btn = egui::Button::new(
+                            RichText::new("Remount")
+                                .strong()
+                                .size(11.0_f32)
+                                .color(Color32::WHITE),
+                        )
+                        .fill(if can_remount {
+                            ACCENT_CYAN_DARK
+                        } else {
+                            BG_ELEVATED
+                        })
+                        .rounding(Rounding::same(4.0_f32));
+                        if ui.add_enabled(can_remount, remount_btn).clicked() {
+                            app.remount_z_drive();
+                        }
+
+                        let disc_btn = egui::Button::new(
+                            RichText::new("Disconnect")
+                                .strong()
+                                .size(11.0_f32)
+                                .color(ACCENT_RED),
+                        )
+                        .fill(BG_ELEVATED)
+                        .stroke(Stroke::new(1.0_f32, ACCENT_RED.linear_multiply(0.55_f32)))
+                        .rounding(Rounding::same(4.0_f32));
+                        if ui.add(disc_btn).clicked() {
+                            app.disconnect_z_drive();
+                        }
+                    });
+                });
+
+            ui.add_space(10.0_f32);
+
+            // Card B: Folder Setup & Scripts
+            surface_card()
+                .show(ui, |ui| {
+                    ui.label(
+                        RichText::new("CARD B: FOLDER SETUP & RESOLVE SCRIPTS")
+                            .strong()
+                            .size(11.5_f32)
+                            .color(TEXT_SECONDARY),
+                    );
+                    ui.add_space(8.0_f32);
+
+                    let folder_checks = app.verify_pipeline_folders();
+                    ui.horizontal_wrapped(|ui| {
+                        for (path, ok) in folder_checks {
+                            let (badge, color) = if ok {
+                                (format!("\u{2713} {path}"), Color32::from_rgb(74, 222, 128))
+                            } else {
+                                (format!("\u{26a0} {path}"), ACCENT_AMBER)
+                            };
+                            Frame::none()
+                                .fill(BG_ELEVATED)
+                                .rounding(Rounding::same(4.0_f32))
+                                .stroke(Stroke::new(1.0_f32, color.linear_multiply(0.45_f32)))
+                                .inner_margin(Margin::symmetric(8.0_f32, 4.0_f32))
+                                .show(ui, |ui| {
+                                    ui.label(RichText::new(badge).monospace().size(10.5_f32).color(color));
+                                });
+                        }
+                    });
+                    ui.add_space(10.0_f32);
+
+                    ui.horizontal_wrapped(|ui| {
+                        let repair_btn = egui::Button::new(
+                            RichText::new("Scaffold / Repair Structure")
+                                .strong()
+                                .size(11.0_f32)
+                                .color(Color32::WHITE),
+                        )
+                        .fill(ACCENT_CYAN_DARK)
+                        .rounding(Rounding::same(4.0_f32));
+                        if ui.add(repair_btn).clicked() {
+                            app.scaffold_repair_pipeline_folders();
+                        }
+
+                        let deploy_btn = egui::Button::new(
+                            RichText::new("Sync Resolve Scripts Now")
+                                .strong()
+                                .size(11.0_f32)
+                                .color(Color32::WHITE),
+                        )
+                        .fill(ACCENT_TEAL_BTN)
+                        .rounding(Rounding::same(4.0_f32));
+                        if ui.add(deploy_btn).clicked() {
+                            app.redeploy_resolve_scripts();
+                        }
+                    });
+                });
+
+            ui.add_space(10.0_f32);
+
+            // Card C: Ingest & Hardware Transcode Queue
+            surface_card()
+                .show(ui, |ui| {
+                    ui.label(
+                        RichText::new("CARD C: INGEST & HARDWARE TRANSCODE QUEUE")
+                            .strong()
+                            .size(11.5_f32)
+                            .color(TEXT_SECONDARY),
+                    );
+                    ui.add_space(8.0_f32);
+
+                    ui.horizontal_wrapped(|ui| {
+                        let browse_btn = egui::Button::new(
+                            RichText::new("\u{1f4c1} Browse Clips to Ingest...")
+                                .strong()
+                                .size(11.5_f32)
+                                .color(Color32::WHITE),
+                        )
+                        .fill(ACCENT_CYAN_DARK)
+                        .rounding(Rounding::same(4.0_f32));
+                        if ui.add(browse_btn).clicked() {
+                            app.browse_and_stage_clips();
+                        }
+
+                        ui.add_space(8.0_f32);
+                        ui.label(
+                            RichText::new(format!("Watch Folder: {}", app.ingest_watch_folder))
+                                .monospace()
+                                .size(10.5_f32)
+                                .color(TEXT_MUTED),
+                        );
+
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            let worker_running = app.is_transcode_worker_running();
+                            let worker_btn = egui::Button::new(
+                                RichText::new(if worker_running {
+                                    "Transcode Worker Running"
+                                } else {
+                                    "Launch Transcode Worker"
+                                })
+                                .strong()
+                                .size(11.0_f32)
+                                .color(Color32::WHITE),
+                            )
+                            .fill(if worker_running {
+                                ACCENT_TEAL_BTN
+                            } else {
+                                ACCENT_AMBER
+                            })
+                            .rounding(Rounding::same(4.0_f32));
+                            if ui.add(worker_btn).clicked() {
+                                app.launch_transcode_worker();
+                            }
+                        });
+                    });
+
+                    ui.add_space(10.0_f32);
+                    ui.label(
+                        RichText::new(format!("STAGING & TRANSCODE QUEUE ({})", app.ingest_queue.len()))
+                            .strong()
+                            .size(10.5_f32)
+                            .color(TEXT_SECONDARY),
+                    );
+                    ui.add_space(6.0_f32);
+
+                    if app.ingest_queue.is_empty() {
+                        ui.label(
+                            RichText::new("No clips queued yet. Click \"Browse Clips to Ingest...\" to stage footage.")
+                                .size(11.0_f32)
+                                .color(TEXT_MUTED),
+                        );
+                    } else {
+                        egui::Grid::new("ingest_queue_grid")
+                            .num_columns(4)
+                            .striped(true)
+                            .spacing(Vec2::new(12.0_f32, 6.0_f32))
+                            .show(ui, |ui| {
+                                ui.label(RichText::new("File").strong().size(10.5_f32).color(TEXT_MUTED));
+                                ui.label(RichText::new("Target Profile").strong().size(10.5_f32).color(TEXT_MUTED));
+                                ui.label(RichText::new("Destination").strong().size(10.5_f32).color(TEXT_MUTED));
+                                ui.label(RichText::new("Status").strong().size(10.5_f32).color(TEXT_MUTED));
+                                ui.end_row();
+                                for job in &app.ingest_queue {
+                                    ui.label(RichText::new(&job.filename).size(11.0_f32).color(TEXT_PRIMARY));
+                                    ui.label(RichText::new(&job.profile).monospace().size(10.5_f32).color(ACCENT_CYAN));
+                                    ui.label(RichText::new(&job.target_path).monospace().size(10.0_f32).color(TEXT_SECONDARY));
+                                    let (st_text, st_color) = match &job.status {
+                                        crate::app::IngestStatus::Queued => ("Queued".to_string(), ACCENT_AMBER),
+                                        crate::app::IngestStatus::Staged => ("Staged".to_string(), ACCENT_TEAL),
+                                        crate::app::IngestStatus::Error(e) => (format!("Error: {e}"), ACCENT_RED),
+                                    };
+                                    ui.label(RichText::new(st_text).strong().size(10.5_f32).color(st_color));
+                                    ui.end_row();
+                                }
+                            });
+                    }
+                });
+        });
+}
+
+fn render_first_run_setup_card(app: &mut ResolveSidecarApp, ui: &mut egui::Ui) {
+    ui.vertical_centered(|ui| {
+        ui.add_space((ui.available_height() * 0.18_f32).max(24.0_f32));
+        Frame::none()
+            .fill(BG_SURFACE)
+            .rounding(Rounding::same(8.0_f32))
+            .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
+            .inner_margin(Margin::same(20.0_f32))
+            .show(ui, |ui| {
+                ui.set_max_width(480.0_f32);
+                ui.label(
+                    RichText::new("Connect to Collaborative Timeline Repo")
+                        .strong()
+                        .size(15.0_f32)
+                        .color(TEXT_PRIMARY),
+                );
+                ui.add_space(6.0_f32);
+                ui.label(
+                    RichText::new("Clone the shared timeline repository to start editing.")
+                        .size(11.5_f32)
+                        .color(TEXT_SECONDARY),
+                );
+                ui.add_space(14.0_f32);
+
+                ui.label(
+                    RichText::new("Git Remote URL")
+                        .strong()
+                        .size(11.0_f32)
+                        .color(TEXT_SECONDARY),
+                );
+                ui.add_space(4.0_f32);
+                ui.add(
+                    egui::TextEdit::singleline(&mut app.setup_remote_url)
+                        .desired_width(440.0_f32),
+                );
+                ui.add_space(10.0_f32);
+
+                ui.label(
+                    RichText::new("Editor Handle")
+                        .strong()
+                        .size(11.0_f32)
+                        .color(TEXT_SECONDARY),
+                );
+                ui.add_space(4.0_f32);
+                ui.add(
+                    egui::TextEdit::singleline(&mut app.setup_editor_handle)
+                        .desired_width(240.0_f32),
+                );
+                ui.add_space(16.0_f32);
+
+                let clone_btn = egui::Button::new(
+                    RichText::new("Clone & Start Editing")
+                        .strong()
+                        .size(12.0_f32)
+                        .color(Color32::WHITE),
+                )
+                .fill(ACCENT_TEAL_BTN)
+                .rounding(Rounding::same(5.0_f32));
+                if ui.add(clone_btn).clicked() {
+                    app.clone_and_start_editing();
+                }
+            });
+    });
 }
 
 fn render_workspace_view(app: &mut ResolveSidecarApp, ui: &mut egui::Ui) {
@@ -461,6 +1509,7 @@ fn render_dag_column(app: &mut ResolveSidecarApp, ui: &mut egui::Ui, width: f32,
                 .count();
 
             ui.horizontal(|ui| {
+                ui.set_max_width(avail_w);
                 ui.label(
                     RichText::new("TIMELINE DAG")
                         .strong()
@@ -468,7 +1517,14 @@ fn render_dag_column(app: &mut ResolveSidecarApp, ui: &mut egui::Ui, width: f32,
                         .color(TEXT_SECONDARY),
                 );
                 let count_label = if collapsed_group_count > 0 {
-                    format!("({} rows / {} commits)", groups.iter().map(|g| if g.is_expanded { g.commits.len() } else { 1 }).sum::<usize>(), app.commits.len())
+                    format!(
+                        "({} rows / {} commits)",
+                        groups
+                            .iter()
+                            .map(|g| if g.is_expanded { g.commits.len() } else { 1 })
+                            .sum::<usize>(),
+                        app.commits.len()
+                    )
                 } else {
                     format!("({} commits)", app.commits.len())
                 };
@@ -478,6 +1534,46 @@ fn render_dag_column(app: &mut ResolveSidecarApp, ui: &mut egui::Ui, width: f32,
                         .size(10.5_f32)
                         .color(TEXT_MUTED),
                 );
+
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    match app.remote_sync_state {
+                        crate::git_engine::RemoteSyncState::Behind(n) => {
+                            let pull_btn = egui::Button::new(
+                                RichText::new("Pull Latest Changes")
+                                    .strong()
+                                    .size(10.0_f32)
+                                    .color(Color32::WHITE),
+                            )
+                            .fill(ACCENT_CYAN_DARK)
+                            .rounding(Rounding::same(4.0_f32));
+                            if ui.add(pull_btn).clicked() {
+                                app.pull_latest_from_origin();
+                            }
+                            ui.label(
+                                RichText::new(format!("Behind ({n})"))
+                                    .monospace()
+                                    .size(10.0_f32)
+                                    .color(ACCENT_AMBER),
+                            );
+                        }
+                        crate::git_engine::RemoteSyncState::Synced => {
+                            ui.label(
+                                RichText::new("\u{25cf} Remote: Synced")
+                                    .monospace()
+                                    .size(10.0_f32)
+                                    .color(Color32::from_rgb(34, 197, 94)),
+                            );
+                        }
+                        crate::git_engine::RemoteSyncState::Checking => {
+                            ui.label(
+                                RichText::new("\u{25cb} Remote: Checking...")
+                                    .monospace()
+                                    .size(10.0_f32)
+                                    .color(TEXT_MUTED),
+                            );
+                        }
+                    }
+                });
             });
             ui.add_space(6.0_f32);
 
@@ -879,6 +1975,16 @@ fn render_inspector_column(
                     let content_w = ui.available_width().min(avail_w);
                     ui.set_max_width(content_w);
 
+                    if app.show_tickets_drawer {
+                        render_tickets_drawer(app, ui, content_w);
+                        return;
+                    }
+
+                    if let Some(pr_branch) = app.pr_review_branch.clone() {
+                        render_pr_review_drawer(app, ui, &pr_branch, content_w);
+                        return;
+                    }
+
                     ui.label(
                         RichText::new("COMMIT INSPECTOR")
                             .strong()
@@ -1009,6 +2115,22 @@ fn render_inspector_column(
                                 );
                                 ui.add_space(6.0_f32);
                                 ui.horizontal_wrapped(|ui| {
+                                    let review_btn = egui::Button::new(
+                                        RichText::new("Review PR Details")
+                                            .strong()
+                                            .size(11.0_f32)
+                                            .color(ACCENT_AMBER),
+                                    )
+                                    .fill(BG_SURFACE)
+                                    .stroke(Stroke::new(
+                                        1.0_f32,
+                                        ACCENT_AMBER.linear_multiply(0.65_f32),
+                                    ))
+                                    .rounding(Rounding::same(5.0_f32));
+                                    if ui.add(review_btn).clicked() {
+                                        app.open_pr_review(&branch);
+                                    }
+
                                     let merge_btn = egui::Button::new(
                                         RichText::new("Accept & Merge to Main")
                                             .strong()
@@ -1070,75 +2192,494 @@ fn render_inspector_column(
                         return;
                     }
 
-                    Frame::none()
-                        .fill(BG_ELEVATED)
-                        .rounding(Rounding::same(5.0_f32))
-                        .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
-                        .inner_margin(Margin::same(8.0_f32))
-                        .show(ui, |ui| {
-                            let gw = ui.available_width().min((content_w - 16.0_f32).max(120.0_f32));
-                            ui.set_max_width(gw);
-                            let col_media_w = (gw - 250.0_f32).max(60.0_f32);
-
-                            egui::Grid::new("timeline_delta_grid")
-                                .num_columns(4)
-                                .striped(true)
-                                .spacing(Vec2::new(8.0_f32, 5.0_f32))
-                                .show(ui, |ui| {
-                                    ui.label(RichText::new("Track").strong().size(10.0_f32).color(TEXT_MUTED));
-                                    ui.label(RichText::new("Media File").strong().size(10.0_f32).color(TEXT_MUTED));
-                                    ui.label(RichText::new("Action").strong().size(10.0_f32).color(TEXT_MUTED));
-                                    ui.label(RichText::new("Range / Delta").strong().size(10.0_f32).color(TEXT_MUTED));
-                                    ui.end_row();
-
-                                    for row in &app.selected_commit_changes {
-                                        let tc = if row.is_audio { ACCENT_TEAL } else { ACCENT_CYAN };
-                                        let cc = match row.change_type.as_str() {
-                                            "Added" | "Track Added" => ACCENT_TEAL,
-                                            "Deleted" | "Track Removed" => ACCENT_RED,
-                                            "Trimmed" => ACCENT_AMBER,
-                                            "Split" => ACCENT_CYAN,
-                                            _ => TEXT_PRIMARY,
-                                        };
-
-                                        ui.label(
-                                            RichText::new(&row.track)
-                                                .monospace()
-                                                .strong()
-                                                .size(10.5_f32)
-                                                .color(tc),
-                                        );
-                                        ui.allocate_ui(Vec2::new(col_media_w, 18.0_f32), |ui| {
-                                            ui.add(
-                                                Label::new(
-                                                    RichText::new(&row.media_file)
-                                                        .size(11.0_f32)
-                                                        .color(TEXT_PRIMARY),
-                                                )
-                                                .truncate(true),
-                                            );
-                                        });
-                                        ui.label(
-                                            RichText::new(&row.change_type)
-                                                .strong()
-                                                .size(10.5_f32)
-                                                .color(cc),
-                                        );
-                                        ui.add(
-                                            Label::new(
-                                                RichText::new(&row.position)
-                                                    .monospace()
-                                                    .size(10.5_f32)
-                                                    .color(TEXT_SECONDARY),
-                                            )
-                                            .wrap(false),
-                                        );
-                                        ui.end_row();
-                                    }
-                                });
-                        });
+                    if let Some(local_path) = render_delta_grid(
+                        ui,
+                        "timeline_delta_grid",
+                        &app.selected_commit_changes,
+                        content_w,
+                    ) {
+                        app.consolidate_media_to_z(&local_path);
+                    }
                 });
         });
+}
+
+fn render_pr_review_drawer(
+    app: &mut ResolveSidecarApp,
+    ui: &mut egui::Ui,
+    pr_branch: &str,
+    content_w: f32,
+) {
+    ui.set_max_width(content_w);
+    Frame::none()
+        .fill(BG_ELEVATED)
+        .rounding(Rounding::same(6.0_f32))
+        .stroke(Stroke::new(
+            1.0_f32,
+            ACCENT_AMBER.linear_multiply(0.65_f32),
+        ))
+        .inner_margin(Margin::same(10.0_f32))
+        .show(ui, |ui| {
+            let cw = ui
+                .available_width()
+                .min((content_w - 20.0_f32).max(120.0_f32));
+            ui.set_max_width(cw);
+
+            ui.add(
+                Label::new(
+                    RichText::new(format!("Pull Request: {pr_branch} \u{2192} main"))
+                        .monospace()
+                        .strong()
+                        .size(12.0_f32)
+                        .color(ACCENT_AMBER),
+                )
+                .truncate(true),
+            );
+            let meta = app.pr_review_meta.clone();
+            let commit_word = if meta.commit_count == 1 {
+                "commit"
+            } else {
+                "commits"
+            };
+            ui.label(
+                RichText::new(format!(
+                    "by {} \u{2022} {} {commit_word}",
+                    meta.author, meta.commit_count
+                ))
+                .size(10.5_f32)
+                .color(TEXT_SECONDARY),
+            );
+            ui.add_space(6.0_f32);
+
+            let dur_sign = if meta.duration_delta_sec > 0.05 {
+                "+"
+            } else {
+                ""
+            };
+            let dur_str = format!("{dur_sign}{:.1}s", meta.duration_delta_sec);
+            let total_clip_deltas = app.pr_review_changes.len();
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    RichText::new(format!("Net cuts: {}", meta.total_cuts))
+                        .monospace()
+                        .size(10.5_f32)
+                        .color(ACCENT_CYAN),
+                );
+                ui.label(
+                    RichText::new(format!("\u{2022} Audio adjustments: {}", meta.audio_edits))
+                        .monospace()
+                        .size(10.5_f32)
+                        .color(ACCENT_TEAL),
+                );
+                ui.label(
+                    RichText::new(format!("\u{2022} Total clip deltas: {total_clip_deltas}"))
+                        .monospace()
+                        .size(10.5_f32)
+                        .color(TEXT_PRIMARY),
+                );
+                ui.label(
+                    RichText::new(format!("\u{2022} Net duration: {dur_str}"))
+                        .monospace()
+                        .size(10.5_f32)
+                        .color(TEXT_SECONDARY),
+                );
+            });
+            ui.add_space(8.0_f32);
+
+            ui.horizontal_wrapped(|ui| {
+                let preview_btn = egui::Button::new(
+                    RichText::new("Preview Cut in Resolve")
+                        .strong()
+                        .size(11.0_f32)
+                        .color(Color32::WHITE),
+                )
+                .fill(ACCENT_CYAN_DARK)
+                .rounding(Rounding::same(5.0_f32));
+                if ui.add(preview_btn).clicked() {
+                    app.preview_branch_cut_in_resolve(pr_branch);
+                }
+
+                let merge_btn = egui::Button::new(
+                    RichText::new("Accept & Merge to Main")
+                        .strong()
+                        .size(11.0_f32)
+                        .color(Color32::WHITE),
+                )
+                .fill(ACCENT_TEAL_BTN)
+                .rounding(Rounding::same(5.0_f32));
+                if ui.add(merge_btn).clicked() {
+                    app.merge_branch_to_main(pr_branch);
+                }
+
+                let close_btn = egui::Button::new(
+                    RichText::new("Close Review")
+                        .strong()
+                        .size(11.0_f32)
+                        .color(TEXT_SECONDARY),
+                )
+                .fill(BG_SURFACE)
+                .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
+                .rounding(Rounding::same(5.0_f32));
+                if ui.add(close_btn).clicked() {
+                    app.close_pr_review();
+                }
+            });
+        });
+
+    ui.add_space(10.0_f32);
+    ui.label(
+        RichText::new("CUMULATIVE BRANCH DELTA VS MAIN")
+            .strong()
+            .size(10.5_f32)
+            .color(TEXT_SECONDARY),
+    );
+    ui.add_space(6.0_f32);
+
+    if app.pr_review_changes.is_empty() {
+        ui.label(
+            RichText::new("No cumulative OTIO differences between this branch and main.")
+                .size(11.0_f32)
+                .color(TEXT_MUTED),
+        );
+    } else if let Some(local_path) = render_delta_grid(
+        ui,
+        "pr_review_delta_grid",
+        &app.pr_review_changes,
+        content_w,
+    ) {
+        app.consolidate_media_to_z(&local_path);
+    }
+}
+
+fn render_tickets_drawer(app: &mut ResolveSidecarApp, ui: &mut egui::Ui, content_w: f32) {
+    ui.set_max_width(content_w);
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new("\u{1f4ac} TICKETS & NITPICKS")
+                .strong()
+                .size(11.5_f32)
+                .color(TEXT_PRIMARY),
+        );
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let close_btn = egui::Button::new(
+                RichText::new("Close")
+                    .strong()
+                    .size(10.5_f32)
+                    .color(TEXT_SECONDARY),
+            )
+            .fill(BG_ELEVATED)
+            .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
+            .rounding(Rounding::same(4.0_f32));
+            if ui.add(close_btn).clicked() {
+                app.show_tickets_drawer = false;
+            }
+        });
+    });
+    ui.add_space(8.0_f32);
+
+    // New Ticket Form
+    Frame::none()
+        .fill(BG_ELEVATED)
+        .rounding(Rounding::same(6.0_f32))
+        .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
+        .inner_margin(Margin::same(10.0_f32))
+        .show(ui, |ui| {
+            let cw = ui
+                .available_width()
+                .min((content_w - 20.0_f32).max(120.0_f32));
+            ui.set_max_width(cw);
+
+            ui.label(
+                RichText::new("NEW TICKET")
+                    .strong()
+                    .size(10.0_f32)
+                    .color(TEXT_SECONDARY),
+            );
+            ui.add_space(6.0_f32);
+
+            ui.horizontal_wrapped(|ui| {
+                for cat in [
+                    crate::tickets::TicketCategory::Nitpick,
+                    crate::tickets::TicketCategory::FeatureIdea,
+                    crate::tickets::TicketCategory::BugReport,
+                ] {
+                    let selected = app.new_ticket_category == cat;
+                    let btn = egui::Button::new(
+                        RichText::new(cat.label())
+                            .strong()
+                            .size(10.5_f32)
+                            .color(if selected {
+                                Color32::WHITE
+                            } else {
+                                TEXT_SECONDARY
+                            }),
+                    )
+                    .fill(if selected { ACCENT_CYAN_DARK } else { BG_SURFACE })
+                    .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
+                    .rounding(Rounding::same(4.0_f32));
+                    if ui.add(btn).clicked() {
+                        app.new_ticket_category = cat;
+                    }
+                }
+            });
+            ui.add_space(6.0_f32);
+
+            ui.add(
+                egui::TextEdit::singleline(&mut app.new_ticket_title)
+                    .hint_text("Short ticket title...")
+                    .desired_width(cw),
+            );
+            ui.add_space(6.0_f32);
+
+            ui.add(
+                egui::TextEdit::multiline(&mut app.new_ticket_description)
+                    .hint_text("Describe the edit note, nitpick, or issue...")
+                    .desired_rows(3)
+                    .desired_width(cw),
+            );
+            ui.add_space(6.0_f32);
+
+            let head_hash = app.active_head_short_hash();
+            let tl_name = app.active_timeline_name();
+            let ts_now = chrono::Utc::now().format("%Y-%m-%d %H:%M");
+            ui.label(
+                RichText::new(format!("HEAD: {head_hash} \u{2022} Timeline: {tl_name} \u{2022} {ts_now}"))
+                    .monospace()
+                    .size(9.5_f32)
+                    .color(TEXT_MUTED),
+            );
+            ui.add_space(6.0_f32);
+
+            let can_submit = !app.new_ticket_title.trim().is_empty();
+            let submit_btn = egui::Button::new(
+                RichText::new("Submit Ticket")
+                    .strong()
+                    .size(11.0_f32)
+                    .color(Color32::WHITE),
+            )
+            .fill(if can_submit {
+                ACCENT_TEAL_BTN
+            } else {
+                BG_SURFACE
+            })
+            .rounding(Rounding::same(5.0_f32));
+            if ui.add_enabled(can_submit, submit_btn).clicked() {
+                app.submit_new_ticket();
+            }
+        });
+
+    ui.add_space(10.0_f32);
+    ui.label(
+        RichText::new(format!("TICKET LIST ({})", app.tickets.len()))
+            .strong()
+            .size(10.5_f32)
+            .color(TEXT_SECONDARY),
+    );
+    ui.add_space(6.0_f32);
+
+    if app.tickets.is_empty() {
+        ui.label(
+            RichText::new("No tickets submitted yet.")
+                .size(11.0_f32)
+                .color(TEXT_MUTED),
+        );
+        return;
+    }
+
+    let snapshot = app.tickets.clone();
+    let mut toggle_id: Option<String> = None;
+    for t in snapshot {
+        let is_open = t.status == crate::tickets::TicketStatus::Open;
+        let status_color = if is_open { ACCENT_AMBER } else { ACCENT_TEAL };
+        Frame::none()
+            .fill(BG_ELEVATED)
+            .rounding(Rounding::same(5.0_f32))
+            .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
+            .inner_margin(Margin::same(8.0_f32))
+            .show(ui, |ui| {
+                let cw = ui
+                    .available_width()
+                    .min((content_w - 16.0_f32).max(120.0_f32));
+                ui.set_max_width(cw);
+
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(format!("[{}]", t.category.label()))
+                            .monospace()
+                            .strong()
+                            .size(10.0_f32)
+                            .color(ACCENT_CYAN),
+                    );
+                    ui.add(
+                        Label::new(
+                            RichText::new(&t.title)
+                                .strong()
+                                .size(11.5_f32)
+                                .color(TEXT_PRIMARY),
+                        )
+                        .truncate(true),
+                    );
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let status_btn = egui::Button::new(
+                            RichText::new(t.status.label())
+                                .monospace()
+                                .strong()
+                                .size(9.5_f32)
+                                .color(status_color),
+                        )
+                        .fill(BG_SURFACE)
+                        .stroke(Stroke::new(1.0_f32, status_color.linear_multiply(0.6_f32)))
+                        .rounding(Rounding::same(3.0_f32));
+                        if ui.add(status_btn).clicked() {
+                            toggle_id = Some(t.id.clone());
+                        }
+                    });
+                });
+
+                ui.label(
+                    RichText::new(format!(
+                        "{} \u{2022} {} \u{2022} {} ({})",
+                        t.author, t.created_at, t.timeline_name, t.commit_hash
+                    ))
+                    .monospace()
+                    .size(9.5_f32)
+                    .color(TEXT_MUTED),
+                );
+                if !t.description.is_empty() {
+                    ui.add_space(4.0_f32);
+                    ui.label(
+                        RichText::new(&t.description)
+                            .size(11.0_f32)
+                            .color(TEXT_SECONDARY),
+                    );
+                }
+            });
+        ui.add_space(6.0_f32);
+    }
+
+    if let Some(id) = toggle_id {
+        app.toggle_ticket_status(&id);
+    }
+}
+
+fn render_delta_grid(
+    ui: &mut egui::Ui,
+    id_source: &str,
+    rows: &[crate::CommitChangeRow],
+    content_w: f32,
+) -> Option<String> {
+    let mut consolidate_req: Option<String> = None;
+    Frame::none()
+        .fill(BG_ELEVATED)
+        .rounding(Rounding::same(5.0_f32))
+        .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
+        .inner_margin(Margin::same(8.0_f32))
+        .show(ui, |ui| {
+            let gw = ui
+                .available_width()
+                .min((content_w - 16.0_f32).max(120.0_f32));
+            ui.set_max_width(gw);
+            let col_media_w = (gw - 250.0_f32).max(90.0_f32);
+
+            egui::Grid::new(id_source)
+                .num_columns(4)
+                .striped(true)
+                .spacing(Vec2::new(8.0_f32, 5.0_f32))
+                .show(ui, |ui| {
+                    ui.label(RichText::new("Track").strong().size(10.0_f32).color(TEXT_MUTED));
+                    ui.label(RichText::new("Media File").strong().size(10.0_f32).color(TEXT_MUTED));
+                    ui.label(RichText::new("Action").strong().size(10.0_f32).color(TEXT_MUTED));
+                    ui.label(RichText::new("Range / Delta").strong().size(10.0_f32).color(TEXT_MUTED));
+                    ui.end_row();
+
+                    for row in rows {
+                        let tc = if row.is_audio { ACCENT_TEAL } else { ACCENT_CYAN };
+                        let cc = match row.change_type.as_str() {
+                            "Added" | "Track Added" => ACCENT_TEAL,
+                            "Deleted" | "Track Removed" => ACCENT_RED,
+                            "Trimmed" => ACCENT_AMBER,
+                            "Split" => ACCENT_CYAN,
+                            _ => TEXT_PRIMARY,
+                        };
+                        let missing_z = crate::is_z_drive_missing(row.media_path.as_deref());
+                        let local_not_on_z =
+                            crate::is_local_media_not_on_z(row.media_path.as_deref());
+
+                        ui.label(
+                            RichText::new(&row.track)
+                                .monospace()
+                                .strong()
+                                .size(10.5_f32)
+                                .color(tc),
+                        );
+                        ui.allocate_ui(Vec2::new(col_media_w, 20.0_f32), |ui| {
+                            ui.vertical(|ui| {
+                                ui.add(
+                                    Label::new(
+                                        RichText::new(&row.media_file)
+                                            .size(11.0_f32)
+                                            .color(TEXT_PRIMARY),
+                                    )
+                                    .truncate(true),
+                                );
+                                if local_not_on_z {
+                                    ui.horizontal_wrapped(|ui| {
+                                        let warn_resp = ui.label(
+                                            RichText::new("\u{26a0} Local Media (Not on Z:\\)")
+                                                .monospace()
+                                                .strong()
+                                                .size(9.5_f32)
+                                                .color(ACCENT_AMBER),
+                                        );
+                                        if let Some(ref mp) = row.media_path {
+                                            warn_resp.on_hover_text(mp);
+                                        }
+                                        let cons_btn = egui::Button::new(
+                                            RichText::new("Move to Z:")
+                                                .strong()
+                                                .size(9.5_f32)
+                                                .color(Color32::WHITE),
+                                        )
+                                        .fill(ACCENT_CYAN_DARK)
+                                        .rounding(Rounding::same(3.0_f32));
+                                        if ui.add(cons_btn).clicked() {
+                                            consolidate_req = row.media_path.clone();
+                                        }
+                                    });
+                                } else if missing_z {
+                                    let warn_resp = ui.label(
+                                        RichText::new("\u{26a0} Missing on Z:")
+                                            .monospace()
+                                            .strong()
+                                            .size(9.5_f32)
+                                            .color(ACCENT_AMBER),
+                                    );
+                                    if let Some(ref mp) = row.media_path {
+                                        warn_resp.on_hover_text(mp);
+                                    }
+                                }
+                            });
+                        });
+                        ui.label(
+                            RichText::new(&row.change_type)
+                                .strong()
+                                .size(10.5_f32)
+                                .color(cc),
+                        );
+                        ui.add(
+                            Label::new(
+                                RichText::new(&row.position)
+                                    .monospace()
+                                    .size(10.5_f32)
+                                    .color(TEXT_SECONDARY),
+                            )
+                            .wrap(false),
+                        );
+                        ui.end_row();
+                    }
+                });
+        });
+    consolidate_req
 }
 
 fn find_sidecar_import_script() -> std::path::PathBuf {
@@ -1170,7 +2711,7 @@ fn find_sidecar_import_script() -> std::path::PathBuf {
     local
 }
 
-fn trigger_restore_to_resolve(app: &mut ResolveSidecarApp, commit_hash: &str) {
+pub(crate) fn trigger_restore_to_resolve(app: &mut ResolveSidecarApp, commit_hash: &str) {
     let restore_path = match crate::git_engine::export_commit_otio(&app.repo_path, commit_hash) {
         Ok(p) => p,
         Err(err) => {

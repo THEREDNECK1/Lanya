@@ -520,6 +520,144 @@ pub fn discard_sandbox(repo_path: &Path, branch_name: &str) -> Result<Option<Str
     discard_branch(repo_path, branch_name)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RemoteSyncState {
+    Checking,
+    Synced,
+    Behind(usize),
+}
+
+fn hidden_git_command(repo_path: &Path, args: &[&str]) -> std::process::Command {
+    let mut cmd = std::process::Command::new("git");
+    cmd.current_dir(repo_path).args(args);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000);
+    }
+    cmd
+}
+
+fn collect_origin_target_oids(repo_path: &Path) -> Vec<(String, Oid)> {
+    let Ok(repo) = Repository::open(repo_path) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    if let Ok(r) = repo.find_reference("refs/remotes/origin/main") {
+        if let Some(id) = r.target() {
+            out.push(("refs/remotes/origin/main".to_string(), id));
+        }
+    }
+    if let Ok(refs) = repo.references_glob("refs/remotes/origin/pass/*") {
+        for r in refs.flatten() {
+            if let (Some(name), Some(id)) = (r.name(), r.target()) {
+                out.push((name.to_string(), id));
+            }
+        }
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+pub fn check_remote_behind_count(repo_path: &Path) -> usize {
+    let Ok(repo) = Repository::open(repo_path) else {
+        return 0;
+    };
+    let Some(local_oid) = repo
+        .find_reference("refs/heads/main")
+        .ok()
+        .and_then(|r| r.target())
+    else {
+        return 0;
+    };
+    let Some(remote_oid) = repo
+        .find_reference("refs/remotes/origin/main")
+        .ok()
+        .and_then(|r| r.target())
+    else {
+        return 0;
+    };
+    repo.graph_ahead_behind(local_oid, remote_oid)
+        .map(|(_ahead, behind)| behind)
+        .unwrap_or(0)
+}
+
+pub fn fetch_origin_and_detect_updates(repo_path: &Path) -> Result<bool, String> {
+    if let Ok(repo) = Repository::open(repo_path) {
+        if repo.find_remote("origin").is_err() {
+            return Ok(false);
+        }
+    } else {
+        return Err("Unable to open repository".to_string());
+    }
+
+    let before = collect_origin_target_oids(repo_path);
+    let output = hidden_git_command(repo_path, &["fetch", "origin", "--prune"])
+        .output()
+        .map_err(|e| format!("git fetch origin failed: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            format!("git fetch origin exited with {}", output.status)
+        } else {
+            stderr
+        });
+    }
+
+    let after = collect_origin_target_oids(repo_path);
+    Ok(before != after)
+}
+
+pub fn pull_latest_main(repo_path: &Path) -> Result<String, String> {
+    let repo = Repository::open(repo_path).map_err(|e| format!("Git open error: {e}"))?;
+    let on_main = repo
+        .head()
+        .ok()
+        .and_then(|h| h.shorthand().map(|s| s == "main"))
+        .unwrap_or(false);
+    if !on_main {
+        let _ = hidden_git_command(repo_path, &["checkout", "main"]).output();
+    }
+
+    let ff_out = hidden_git_command(repo_path, &["merge", "--ff-only", "origin/main"])
+        .output()
+        .map_err(|e| format!("git merge --ff-only failed: {e}"))?;
+    if ff_out.status.success() {
+        return Ok(String::from_utf8_lossy(&ff_out.stdout).trim().to_string());
+    }
+
+    let pull_out = hidden_git_command(repo_path, &["pull", "--no-edit", "origin", "main"])
+        .output()
+        .map_err(|e| format!("git pull origin main failed: {e}"))?;
+    if pull_out.status.success() {
+        Ok(String::from_utf8_lossy(&pull_out.stdout).trim().to_string())
+    } else {
+        let stderr = String::from_utf8_lossy(&pull_out.stderr).trim().to_string();
+        Err(if stderr.is_empty() {
+            format!("git pull exited with {}", pull_out.status)
+        } else {
+            stderr
+        })
+    }
+}
+
+pub fn push_main_to_origin(repo_path: &Path) -> Result<(), String> {
+    let output = hidden_git_command(repo_path, &["push", "origin", "main"])
+        .output()
+        .map_err(|e| format!("git push origin main failed: {e}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Err(if stderr.is_empty() {
+            format!("git push exited with {}", output.status)
+        } else {
+            stderr
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

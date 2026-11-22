@@ -13,6 +13,114 @@ pub struct ClipMeta {
     pub duration_seconds: f64,
     pub timeline_offset_sec: f64,
     pub rate: f64,
+    #[serde(default)]
+    pub media_path: Option<String>,
+}
+
+fn normalize_otio_target_url(raw_url: &str) -> Option<String> {
+    let trimmed = raw_url.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let stripped = trimmed
+        .strip_prefix("file:///")
+        .or_else(|| trimmed.strip_prefix("file://"))
+        .unwrap_or(trimmed);
+    let decoded = stripped.replace("%20", " ");
+    #[cfg(windows)]
+    let normalized = decoded.replace('/', "\\");
+    #[cfg(not(windows))]
+    let normalized = decoded;
+    Some(normalized)
+}
+
+#[allow(dead_code)]
+pub fn target_z_subfolder_for_media(path: &Path) -> &'static str {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+    match ext.as_str() {
+        "wav" | "aif" | "aiff" | "mp3" | "aac" | "m4a" | "flac" | "ogg" | "bwf" | "opus" => {
+            "Audio"
+        }
+        _ => "Proxies",
+    }
+}
+
+#[allow(dead_code)]
+pub fn rewrite_otio_media_target(
+    otio_path: &Path,
+    old_path: &str,
+    new_z_path: &str,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    let raw = std::fs::read_to_string(otio_path)?;
+    let mut root: Value = serde_json::from_str(&raw)?;
+    let target_norm = normalize_otio_target_url(old_path)
+        .unwrap_or_else(|| old_path.trim().to_string())
+        .to_ascii_lowercase();
+
+    fn rewrite_children(
+        children: &mut [Value],
+        target_norm: &str,
+        new_z_path: &str,
+        updated: &mut usize,
+    ) {
+        for item in children {
+            let schema = item
+                .get("schema")
+                .or_else(|| item.get("OTIO_SCHEMA"))
+                .and_then(|s| s.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            match schema.as_str() {
+                "Clip.1" | "Clip.2" => {
+                    for pointer in [
+                        "/media_reference/target_url",
+                        "/media_references/DEFAULT_MEDIA/target_url",
+                    ] {
+                        if let Some(val) = item.pointer_mut(pointer) {
+                            if let Some(curr_str) = val.as_str() {
+                                if let Some(curr_norm) = normalize_otio_target_url(curr_str) {
+                                    if curr_norm.to_ascii_lowercase() == target_norm {
+                                        *val = Value::String(new_z_path.to_string());
+                                        *updated += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                "Stack.1" | "Track.1" => {
+                    if let Some(nested) = item.get_mut("children").and_then(|c| c.as_array_mut()) {
+                        rewrite_children(nested, target_norm, new_z_path, updated);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let mut updated = 0usize;
+    if let Some(tracks) = root
+        .pointer_mut("/tracks/children")
+        .and_then(|c| c.as_array_mut())
+    {
+        for track in tracks {
+            if let Some(children) = track.get_mut("children").and_then(|c| c.as_array_mut()) {
+                rewrite_children(children, &target_norm, new_z_path, &mut updated);
+            }
+        }
+    }
+
+    if updated > 0 {
+        let formatted = serde_json::to_string_pretty(&root)?;
+        std::fs::write(otio_path, formatted)?;
+    }
+
+    Ok(updated)
 }
 
 #[derive(Default, Clone, Debug)]
@@ -128,6 +236,12 @@ pub fn parse_otio(json_str: &str) -> Result<TimelineSnapshot, Box<dyn std::error
                         format!("{base_key}#{occ}")
                     };
 
+                    let media_path = item
+                        .pointer("/media_reference/target_url")
+                        .or_else(|| item.pointer("/media_references/DEFAULT_MEDIA/target_url"))
+                        .and_then(|v| v.as_str())
+                        .and_then(normalize_otio_target_url);
+
                     snapshot.clips.insert(
                         key,
                         ClipMeta {
@@ -138,6 +252,7 @@ pub fn parse_otio(json_str: &str) -> Result<TimelineSnapshot, Box<dyn std::error
                             duration_seconds,
                             timeline_offset_sec,
                             rate: dur_rate,
+                            media_path,
                         },
                     );
                 }
@@ -592,5 +707,53 @@ mod tests {
         let d_split = s_split.diff(&s_trim);
         let split_msg = format_delta_commit_message(&d_split);
         assert_eq!(split_msg, "split: V1 at 00:00:02");
+    }
+
+    #[test]
+    fn test_z_subfolder_and_otio_rewrite() {
+        assert_eq!(target_z_subfolder_for_media(Path::new(r"C:\Media\mix.WAV")), "Audio");
+        assert_eq!(target_z_subfolder_for_media(Path::new(r"C:\Media\clip.mov")), "Proxies");
+
+        let tmp = std::env::temp_dir().join("resolve_sidecar_rewrite_test.otio");
+        let sample = r#"{
+            "OTIO_SCHEMA": "Timeline.1",
+            "name": "Cut",
+            "tracks": {
+                "children": [
+                    {
+                        "name": "V1",
+                        "kind": "Video",
+                        "children": [
+                            {
+                                "OTIO_SCHEMA": "Clip.2",
+                                "name": "A001.mov",
+                                "media_reference": {
+                                    "OTIO_SCHEMA": "ExternalReference.1",
+                                    "target_url": "file:///C:/Users/zanem/Footage/A001.mov"
+                                },
+                                "source_range": {
+                                    "start_time": {"value": 0.0, "rate": 24.0},
+                                    "duration": {"value": 24.0, "rate": 24.0}
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+        }"#;
+        std::fs::write(&tmp, sample).unwrap();
+        let count = rewrite_otio_media_target(
+            &tmp,
+            r"C:\Users\zanem\Footage\A001.mov",
+            r"Z:\Proxies\A001.mov",
+        )
+        .unwrap();
+        assert_eq!(count, 1);
+
+        let updated = std::fs::read_to_string(&tmp).unwrap();
+        let snap = parse_otio(&updated).unwrap();
+        let clip = snap.clips.values().next().unwrap();
+        assert_eq!(clip.media_path.as_deref(), Some(r"Z:\Proxies\A001.mov"));
+        let _ = std::fs::remove_file(&tmp);
     }
 }
