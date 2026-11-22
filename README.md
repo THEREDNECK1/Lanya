@@ -11,6 +11,14 @@
 - **Background Ingest & Proxy Automation:** Integrates background pipeline scripts to transcode proxy files and normalize ingest footage.
 - **Zero-Friction Windows Deployment:** Packaged into a standalone per-machine `.msi` built with WiX v3.11.
 
+<img width="960" height="564" alt="image" src="https://github.com/user-attachments/assets/d393dbb2-5e7f-44b4-b66b-82018f83c041" />
+
+<img width="960" height="564" alt="image" src="https://github.com/user-attachments/assets/8698fa85-888d-4902-b88d-6a45a15569b1" />
+
+<img width="960" height="564" alt="image" src="https://github.com/user-attachments/assets/ce75a700-a532-4e23-9b93-9a0d67e6ebb9" />
+
+
+
 ---
 
 ## Installation
